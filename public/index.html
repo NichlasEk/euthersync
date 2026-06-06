@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>EutherSync</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>EutherSync</h1>
+        <p>Private backups and an intentional family feed.</p>
+      </div>
+      <div class="session">
+        <span id="route" class="route" data-kind="offline">Offline</span>
+        <span id="user-label"></span>
+        <button id="logout" type="button">Sign out</button>
+      </div>
+    </header>
+
+    <main>
+      <section id="login" class="auth-panel">
+        <form id="login-form">
+          <h2>Sign in</h2>
+          <label>
+            Username
+            <input name="username" autocomplete="username" required value="nichlas">
+          </label>
+          <label>
+            Password
+            <input name="password" type="password" autocomplete="current-password" required>
+          </label>
+          <button type="submit">Sign in</button>
+          <p id="login-message" class="message"></p>
+        </form>
+      </section>
+
+      <section id="app" hidden>
+        <nav class="tabs" aria-label="Views">
+          <button id="backup-tab" class="active" type="button" data-view="backup">Private library</button>
+          <button type="button" data-view="feed">Family feed</button>
+          <button id="admin-tab" type="button" data-view="admin" hidden>Admin</button>
+        </nav>
+
+        <section data-panel="backup">
+          <div class="split">
+            <form id="upload-form" class="upload-panel">
+              <h2>Private backup</h2>
+              <p>Files uploaded here stay private until you choose to publish one.</p>
+              <label>
+                Device ID
+                <input name="deviceId" value="web" required>
+              </label>
+              <label>
+                Device name
+                <input name="deviceName" value="Web upload" required>
+              </label>
+              <label>
+                Photos or videos
+                <input name="media" type="file" accept="image/*,video/*" multiple required>
+              </label>
+              <button type="submit">Back up privately</button>
+              <p id="upload-message" class="message"></p>
+            </form>
+            <div>
+              <div class="section-heading">
+                <h2>Library</h2>
+                <p id="library-message" class="message"></p>
+              </div>
+              <div id="library" class="grid"></div>
+            </div>
+          </div>
+        </section>
+
+        <section data-panel="feed" hidden>
+          <div class="section-heading">
+            <h2>Family feed</h2>
+            <p>Chronological posts shared with invited family users.</p>
+          </div>
+          <form id="feed-form" class="feed-compose">
+            <label>
+              New family post
+              <input name="caption" placeholder="Share a short update" maxlength="500">
+            </label>
+            <button type="submit">Post</button>
+          </form>
+          <p id="feed-message" class="message"></p>
+          <div id="feed" class="feed"></div>
+        </section>
+
+        <section data-panel="admin" hidden>
+          <div class="section-heading">
+            <h2>Admin</h2>
+            <p>Grant or revoke private backup access.</p>
+          </div>
+          <div id="admin-users" class="admin-list"></div>
+          <p id="admin-message" class="message"></p>
+        </section>
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
