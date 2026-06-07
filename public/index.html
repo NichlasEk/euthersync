@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>EutherSync</title>
-    <link rel="stylesheet" href="styles.css?v=20260607-6">
+    <link rel="stylesheet" href="styles.css?v=20260607-7">
   </head>
   <body>
     <header class="topbar">
@@ -39,11 +39,11 @@
 
       <section id="app" hidden>
         <nav class="tabs" aria-label="Views">
-          <button id="backup-tab" class="active" type="button" data-view="backup">Private library</button>
-          <button type="button" data-view="feed">Family feed</button>
+          <button id="backup-tab" type="button" data-view="backup">Private library</button>
+          <button class="active" type="button" data-view="feed">Family feed</button>
         </nav>
 
-        <section data-panel="backup">
+        <section data-panel="backup" hidden>
           <div class="split">
             <form id="upload-form" class="upload-panel">
               <h2>Private backup</h2>
@@ -73,7 +73,7 @@
           </div>
         </section>
 
-        <section data-panel="feed" hidden>
+        <section data-panel="feed">
           <div class="section-heading">
             <h2>Family feed</h2>
             <p>Chronological posts shared with invited family users.</p>
@@ -154,6 +154,6 @@
       <img id="media-viewer-image" alt="">
     </div>
 
-    <script type="module" src="app.js?v=20260607-6"></script>
+    <script type="module" src="app.js?v=20260607-7"></script>
   </body>
 </html>

@@ -529,8 +529,7 @@ function renderAuth() {
   els.feedForm.hidden = Boolean(state.user) && !can("feed_post");
   els.settingsAdminLink.hidden = !can("admin");
   els.userSettings.hidden = !state.user;
-  if (state.user && !can("media_backup")) showPanel("feed");
-  if (state.user && can("media_backup")) showPanel("backup");
+  if (state.user) showPanel("feed");
   renderSettings();
 }
 
