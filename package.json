@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "android:release": "../../scripts/euthersync-release-apk.sh",
     "dev": "node server/index.js",
     "start": "node server/index.js"
   },

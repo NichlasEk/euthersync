@@ -40,6 +40,56 @@ EUTHERSYNC_DEFAULT_PASSWORD='replace-this' \
 npm run dev
 ```
 
+## Android Release APK
+
+The EutherOxide frontend download button points at
+`/downloads/EutherSync-release-signed.apk`.
+The EutherOxide host serves that route from:
+
+```text
+/home/nichlas/EutherSync-release-signed.apk
+```
+
+Build and publish the WebView wrapper APK with:
+
+```sh
+npm run android:release
+```
+
+The same pipeline is also available from the EutherOxide repo root:
+
+```sh
+npm run android:euthersync
+```
+
+To rebuild both fronted Android downloads from the EutherOxide repo root:
+
+```sh
+npm run android:release-apks
+```
+
+By default the Android wrapper opens:
+
+```text
+http://eutheroxide.local:3000
+```
+
+Override that at build time when needed:
+
+```sh
+EUTHERSYNC_ANDROID_URL=https://photos.example.com npm run android:release
+```
+
+The release script writes both:
+
+```text
+/home/nichlas/EutherSync-release-signed.apk
+apps/euthersync/releases/EutherSync-release-signed.apk
+```
+
+The host server first honors `EUTHERSYNC_APK_PATH`, then falls back to the
+home-path APK, then to the repo release copy.
+
 ## Configuration
 
 EutherSync reads `config.json` in the project directory unless `EUTHERSYNC_CONFIG` points elsewhere. Environment variables override the file:
