@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>EutherSync</title>
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="styles.css?v=20260607-1">
   </head>
   <body>
     <header class="topbar">
@@ -15,6 +15,7 @@
       <div class="session">
         <span id="route" class="route" data-kind="offline">Offline</span>
         <span id="user-label"></span>
+        <button id="user-settings" class="icon-button" type="button" aria-label="User settings" title="User settings">&#9881;</button>
         <button id="logout" type="button">Sign out</button>
       </div>
     </header>
@@ -95,6 +96,12 @@
               Image
               <input id="feed-image" name="image" type="file" accept="image/*">
             </label>
+            <div class="compose-actions">
+              <label class="secondary-button">
+                Camera
+                <input id="feed-camera" name="camera" type="file" accept="image/*" capture="environment" hidden>
+              </label>
+            </div>
             <div id="feed-image-meta" class="file-meta"></div>
             <button type="submit">Post</button>
           </form>
@@ -110,9 +117,35 @@
           <div id="admin-users" class="admin-list"></div>
           <p id="admin-message" class="message"></p>
         </section>
+
+        <section data-panel="settings" hidden>
+          <div class="section-heading">
+            <h2>User settings</h2>
+            <p>Theme and skin follow your account.</p>
+          </div>
+          <div class="settings-panel">
+            <div>
+              <h3>Theme</h3>
+              <div class="settings-grid" role="group" aria-label="theme">
+                <button type="button" data-theme="light">Light</button>
+                <button type="button" data-theme="dark">Dark</button>
+                <button type="button" data-theme="royal-apothic">Royal Apothic</button>
+              </div>
+            </div>
+            <div>
+              <h3>Skins</h3>
+              <div class="settings-grid" role="group" aria-label="skin">
+                <button type="button" data-skin="classic">Classic</button>
+                <button type="button" data-skin="glass">Glass</button>
+                <button type="button" data-skin="arcade">Arcade</button>
+              </div>
+            </div>
+            <p id="settings-message" class="message"></p>
+          </div>
+        </section>
       </section>
     </main>
 
-    <script type="module" src="app.js"></script>
+    <script type="module" src="app.js?v=20260607-1"></script>
   </body>
 </html>

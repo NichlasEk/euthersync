@@ -11,6 +11,30 @@
   --radius: 8px;
 }
 
+body[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #101713;
+  --panel: #17221d;
+  --ink: #eef8ee;
+  --muted: #a6b8ad;
+  --line: #2d4036;
+  --accent: #55b98c;
+  --accent-ink: #07110d;
+  --warn: #f0c46a;
+}
+
+body[data-theme="royal-apothic"] {
+  color-scheme: dark;
+  --bg: #100a1c;
+  --panel: #1c122b;
+  --ink: #fff3d7;
+  --muted: #d5c3ec;
+  --line: #4f3968;
+  --accent: #d8ad52;
+  --accent-ink: #150d20;
+  --warn: #f0c46a;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -20,6 +44,19 @@ body {
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   background: var(--bg);
   color: var(--ink);
+}
+
+body[data-skin="glass"] {
+  --panel: color-mix(in srgb, var(--bg) 22%, white 78%);
+}
+
+body[data-theme="dark"][data-skin="glass"],
+body[data-theme="royal-apothic"][data-skin="glass"] {
+  --panel: rgba(255, 255, 255, 0.08);
+}
+
+body[data-skin="arcade"] {
+  --radius: 4px;
 }
 
 button,
@@ -37,6 +74,29 @@ button {
   cursor: pointer;
 }
 
+.secondary-button,
+.icon-button {
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
+  padding: 0.7rem 0.9rem;
+  cursor: pointer;
+}
+
+.icon-button {
+  min-width: 2.5rem;
+  padding: 0.55rem;
+}
+
+.icon-button.active,
+.settings-grid button.active {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
 button:disabled {
   background: #aeb7b2;
   cursor: default;
@@ -49,6 +109,14 @@ textarea {
   border-radius: 6px;
   padding: 0.65rem 0.7rem;
   background: #fff;
+}
+
+body[data-theme="dark"] input,
+body[data-theme="dark"] textarea,
+body[data-theme="royal-apothic"] input,
+body[data-theme="royal-apothic"] textarea {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--ink);
 }
 
 textarea {
@@ -75,6 +143,11 @@ label {
   top: 0;
   backdrop-filter: blur(12px);
   z-index: 2;
+}
+
+body[data-theme="dark"] .topbar,
+body[data-theme="royal-apothic"] .topbar {
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
 }
 
 h1,
@@ -112,6 +185,18 @@ h2 {
   background: #fff;
   padding: 0.35rem 0.65rem;
   font-size: 0.88rem;
+}
+
+body[data-theme="dark"] .route,
+body[data-theme="royal-apothic"] .route,
+body[data-theme="dark"] .tabs button,
+body[data-theme="royal-apothic"] .tabs button,
+body[data-theme="dark"] .emoji-row button,
+body[data-theme="royal-apothic"] .emoji-row button,
+body[data-theme="dark"] .post-actions button,
+body[data-theme="royal-apothic"] .post-actions button {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--ink);
 }
 
 .route[data-kind="offline"] {
@@ -244,6 +329,10 @@ main {
   display: grid;
   gap: 1rem;
   width: min(760px, 100%);
+  max-height: calc(100vh - 13rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 0.25rem;
 }
 
 .feed-compose {
@@ -254,6 +343,12 @@ main {
 .emoji-row {
   display: flex;
   gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.compose-actions {
+  display: flex;
+  gap: 0.5rem;
   flex-wrap: wrap;
 }
 
@@ -330,6 +425,51 @@ main {
   width: min(760px, 100%);
 }
 
+.settings-panel {
+  display: grid;
+  gap: 1rem;
+  width: min(760px, 100%);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1rem;
+}
+
+.settings-panel h3 {
+  margin: 0 0 0.65rem;
+  font-size: 0.95rem;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+body[data-skin="glass"] .topbar,
+body[data-skin="glass"] .auth-panel form,
+body[data-skin="glass"] .upload-panel,
+body[data-skin="glass"] .feed-compose,
+body[data-skin="glass"] .feed-post,
+body[data-skin="glass"] .media-card,
+body[data-skin="glass"] .settings-panel {
+  backdrop-filter: blur(14px);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.12);
+}
+
+body[data-skin="arcade"] button,
+body[data-skin="arcade"] .secondary-button,
+body[data-skin="arcade"] .icon-button,
+body[data-skin="arcade"] .auth-panel form,
+body[data-skin="arcade"] .upload-panel,
+body[data-skin="arcade"] .feed-compose,
+body[data-skin="arcade"] .feed-post,
+body[data-skin="arcade"] .media-card,
+body[data-skin="arcade"] .settings-panel {
+  border-width: 2px;
+  box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.16);
+}
+
 .admin-row {
   display: flex;
   justify-content: space-between;
@@ -380,10 +520,16 @@ main {
   .feed-compose,
   .feed-post header,
   .post-actions,
-  .admin-row {
+  .admin-row,
+  .settings-grid {
     grid-template-columns: 1fr;
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .feed {
+    max-height: none;
+    overflow: visible;
   }
 
   .upload-panel {

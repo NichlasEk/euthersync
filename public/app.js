@@ -8,7 +8,15 @@ const state = {
   user: null,
   files: [],
   posts: [],
-  users: []
+  users: [],
+  preferences: {
+    theme: localStorage.getItem("euthersync-theme") || "light",
+    skin: localStorage.getItem("euthersync-skin") || "classic"
+  },
+  feedRefreshInFlight: false,
+  feedLastRefreshAt: 0,
+  feedPullStartY: null,
+  feedPullTriggered: false
 };
 
 const els = {
@@ -19,11 +27,13 @@ const els = {
   uploadForm: document.querySelector("#upload-form"),
   feedForm: document.querySelector("#feed-form"),
   feedImage: document.querySelector("#feed-image"),
+  feedCamera: document.querySelector("#feed-camera"),
   feedImageMeta: document.querySelector("#feed-image-meta"),
   library: document.querySelector("#library"),
   feed: document.querySelector("#feed"),
   adminUsers: document.querySelector("#admin-users"),
   userLabel: document.querySelector("#user-label"),
+  userSettings: document.querySelector("#user-settings"),
   logout: document.querySelector("#logout"),
   backupTab: document.querySelector("#backup-tab"),
   adminTab: document.querySelector("#admin-tab"),
@@ -34,10 +44,14 @@ const els = {
 boot();
 
 async function boot() {
+  applyAppearance();
   await connectWormhole();
   await refreshMe();
   bindEvents();
-  if (state.user) await refreshAll();
+  if (state.user) {
+    await refreshPreferences();
+    await refreshAll();
+  }
 }
 
 async function connectWormhole() {
@@ -69,13 +83,25 @@ async function refreshMe() {
 function bindEvents() {
   els.loginForm.addEventListener("submit", onLogin);
   els.logout.addEventListener("click", onLogout);
+  els.userSettings.addEventListener("click", () => showPanel("settings"));
   els.uploadForm.addEventListener("submit", onUpload);
   els.feedForm.addEventListener("submit", onFeedPost);
   els.feedForm.addEventListener("click", onFeedComposeClick);
   els.feedImage.addEventListener("change", renderFeedImageMeta);
+  els.feedCamera.addEventListener("change", onFeedCameraChange);
   els.library.addEventListener("click", onLibraryClick);
   els.feed.addEventListener("click", onFeedClick);
+  els.feed.addEventListener("scroll", onFeedScroll);
+  els.feed.addEventListener("pointerdown", onFeedPointerDown);
+  els.feed.addEventListener("pointermove", onFeedPointerMove);
+  els.feed.addEventListener("pointerup", resetFeedPull);
+  els.feed.addEventListener("pointercancel", resetFeedPull);
   els.adminUsers.addEventListener("change", onAdminPermissionChange);
+  document.querySelector("[data-panel='settings']").addEventListener("click", onSettingsClick);
+  window.addEventListener("focus", () => refreshFeedIfActive("focus", 2500));
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") refreshFeedIfActive("visible", 2500);
+  });
   els.viewButtons.forEach((button) => {
     button.addEventListener("click", () => showPanel(button.dataset.view));
   });
@@ -96,6 +122,7 @@ async function onLogin(event) {
   const data = await response.json();
   state.user = data.user;
   renderAuth();
+  await refreshPreferences();
   await refreshAll();
 }
 
@@ -179,11 +206,42 @@ async function onFeedPost(event) {
     const error = await response.json().catch(() => ({ error: "Posting failed" }));
     return showMessage("feed-message", error.error || "Posting failed.");
   }
+  const data = await response.json().catch(() => null);
+  if (data?.post) {
+    state.posts = [data.post, ...state.posts.filter((post) => post.post.id !== data.post.post.id)];
+    renderFeed();
+  }
   event.currentTarget.reset();
   renderFeedImageMeta();
   showMessage("feed-message", "Posted to the family feed.");
-  await refreshFeed({ fresh: true });
   showPanel("feed");
+  refreshFeed({ fresh: true }).catch(() => {
+    showMessage("feed-message", "Posted. Feed refresh will retry on next open.");
+  });
+}
+
+async function onFeedCameraChange() {
+  const file = els.feedCamera.files?.[0];
+  els.feedCamera.value = "";
+  if (!file || !can("feed_post")) return;
+  const captionInput = els.feedForm.elements.caption;
+  const caption = String(captionInput?.value || "").trim();
+  showMessage("feed-message", "Posting camera photo...");
+  const response = await postFeedImage(file, caption || "Camera photo");
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "Camera post failed" }));
+    return showMessage("feed-message", error.error || "Camera post failed.");
+  }
+  const data = await response.json().catch(() => null);
+  if (data?.post) {
+    state.posts = [data.post, ...state.posts.filter((post) => post.post.id !== data.post.post.id)];
+    renderFeed();
+  }
+  if (captionInput) captionInput.value = "";
+  renderFeedImageMeta();
+  showPanel("feed");
+  showMessage("feed-message", "Camera photo posted.");
+  await refreshFeed({ fresh: true });
 }
 
 async function postFeedImage(file, caption) {
@@ -207,6 +265,40 @@ function onFeedComposeClick(event) {
 function renderFeedImageMeta() {
   const file = els.feedImage.files?.[0];
   els.feedImageMeta.textContent = file ? `${file.name} · ${formatBytes(file.size)}` : "";
+}
+
+function onFeedScroll() {
+  if (els.feed.scrollTop <= 0) refreshFeedIfActive("top-scroll", 1800);
+}
+
+function onFeedPointerDown(event) {
+  if (els.feed.scrollTop <= 0) {
+    state.feedPullStartY = event.clientY;
+    state.feedPullTriggered = false;
+  }
+}
+
+function onFeedPointerMove(event) {
+  if (
+    state.feedPullStartY !== null &&
+    !state.feedPullTriggered &&
+    event.clientY - state.feedPullStartY > 58
+  ) {
+    state.feedPullTriggered = true;
+    refreshFeedIfActive("pull-top", 1200);
+  }
+}
+
+function resetFeedPull() {
+  state.feedPullStartY = null;
+  state.feedPullTriggered = false;
+}
+
+function onSettingsClick(event) {
+  const theme = event.target.closest("[data-theme]")?.dataset.theme;
+  if (theme) return setPreference("theme", normalizeTheme(theme));
+  const skin = event.target.closest("[data-skin]")?.dataset.skin;
+  if (skin) return setPreference("skin", normalizeSkin(skin));
 }
 
 async function onAdminPermissionChange(event) {
@@ -262,6 +354,48 @@ async function refreshFeed(options = {}) {
   renderFeed();
 }
 
+async function refreshFeedIfActive(_reason, minIntervalMs = 1500) {
+  if (!state.user || state.feedRefreshInFlight || document.querySelector("[data-panel='feed']").hidden) return;
+  const now = Date.now();
+  if (now - state.feedLastRefreshAt < minIntervalMs) return;
+  state.feedLastRefreshAt = now;
+  state.feedRefreshInFlight = true;
+  const wasAtTop = els.feed.scrollTop <= 0;
+  try {
+    await refreshFeed({ fresh: true });
+    if (wasAtTop) els.feed.scrollTop = 0;
+  } finally {
+    state.feedRefreshInFlight = false;
+  }
+}
+
+async function refreshPreferences() {
+  const response = await api("/api/user/preferences");
+  if (!response.ok) {
+    applyAppearance();
+    return;
+  }
+  const preferences = await response.json();
+  state.preferences.theme = normalizeTheme(preferences.theme);
+  state.preferences.skin = normalizeSkin(preferences.skin);
+  localStorage.setItem("euthersync-theme", state.preferences.theme);
+  localStorage.setItem("euthersync-skin", state.preferences.skin);
+  applyAppearance();
+}
+
+async function setPreference(key, value) {
+  state.preferences[key] = value;
+  localStorage.setItem(`euthersync-${key}`, value);
+  applyAppearance();
+  renderSettings();
+  const response = await api("/api/user/preferences", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(state.preferences)
+  });
+  showMessage("settings-message", response.ok ? "Saved." : "Settings save failed.");
+}
+
 async function refreshUsers() {
   if (!can("admin")) return;
   const response = await api("/api/admin/users");
@@ -282,8 +416,10 @@ function renderAuth() {
   els.logout.hidden = !state.user;
   els.backupTab.hidden = !can("media_backup");
   els.adminTab.hidden = !can("admin");
+  els.userSettings.hidden = !state.user;
   if (state.user && !can("media_backup")) showPanel("feed");
   if (state.user && can("media_backup")) showPanel("backup");
+  renderSettings();
 }
 
 function renderLibrary() {
@@ -372,6 +508,34 @@ function showPanel(panel) {
   els.viewButtons.forEach((button) => {
     button.classList.toggle("active", button.dataset.view === panel);
   });
+  els.userSettings.classList.toggle("active", panel === "settings");
+  if (panel === "feed") refreshFeedIfActive("show", 0);
+  if (panel === "settings") renderSettings();
+}
+
+function renderSettings() {
+  document.querySelectorAll("[data-theme]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.theme === state.preferences.theme);
+  });
+  document.querySelectorAll("[data-skin]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.skin === state.preferences.skin);
+  });
+}
+
+function normalizeTheme(value) {
+  return value === "dark" || value === "royal-apothic" ? value : "light";
+}
+
+function normalizeSkin(value) {
+  return value === "glass" || value === "arcade" ? value : "classic";
+}
+
+function applyAppearance() {
+  state.preferences.theme = normalizeTheme(state.preferences.theme);
+  state.preferences.skin = normalizeSkin(state.preferences.skin);
+  document.body.dataset.theme = state.preferences.theme;
+  document.body.dataset.skin = state.preferences.skin;
+  document.documentElement.style.colorScheme = state.preferences.theme === "light" ? "light" : "dark";
 }
 
 async function api(path, options = {}) {
@@ -389,6 +553,9 @@ function uploadWithProgress(path, body, headers, onProgress) {
     xhr.upload.addEventListener("progress", (event) => {
       if (!event.lengthComputable) return showMessage("feed-message", "Uploading image...");
       onProgress(Math.max(1, Math.min(99, Math.round((event.loaded / event.total) * 100))));
+    });
+    xhr.upload.addEventListener("load", () => {
+      showMessage("feed-message", "Processing image...");
     });
     xhr.addEventListener("load", () => {
       resolve({

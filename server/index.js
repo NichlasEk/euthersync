@@ -123,6 +123,8 @@ async function route(req, res) {
   if (req.method === "GET" && url.pathname === "/api/me") return json(res, 200, { user });
   if (req.method === "GET" && url.pathname === "/api/admin/users") return adminUsers(res, user);
   if (req.method === "PATCH" && url.pathname.startsWith("/api/admin/users/")) return adminPermissions(req, res, url, user);
+  if (req.method === "GET" && url.pathname === "/api/user/preferences") return userPreferences(res, user);
+  if (req.method === "POST" && url.pathname === "/api/user/preferences") return saveUserPreferences(req, res, user);
   if (req.method === "POST" && url.pathname === "/api/upload") return upload(req, res, url, user);
   if (req.method === "GET" && url.pathname === "/api/library") return library(res, user);
   if (req.method === "POST" && url.pathname === "/api/publish") return publish(req, res, user);
@@ -305,6 +307,17 @@ async function feed(res, user) {
   }
   posts = posts.filter(Boolean).sort((a, b) => String(b.post.createdAt).localeCompare(String(a.post.createdAt)));
   return json(res, 200, { posts });
+}
+
+async function userPreferences(res, user) {
+  return json(res, 200, await readUserPreferences(user));
+}
+
+async function saveUserPreferences(req, res, user) {
+  const body = await readJson(req);
+  const preferences = normalizeUserPreferences(body);
+  await writeUserPreferences(user, preferences);
+  return json(res, 200, preferences);
 }
 
 async function createFeedPost(req, res, user) {
@@ -636,6 +649,91 @@ function normalizePermissions(permissions = {}) {
 
 function hasPermission(user, permission) {
   return normalizePermissions(user?.permissions)[permission] === true;
+}
+
+async function readUserPreferences(user) {
+  const preferences = { theme: "light", skin: "classic" };
+  const settingsPath = hostUserSettingsPath(user);
+  if (!settingsPath) return preferences;
+  try {
+    const contents = await readFile(settingsPath, "utf8");
+    preferences.theme = normalizeTheme(parseTomlString(contents, "theme") || preferences.theme);
+    preferences.skin = normalizeSkin(parseTomlString(contents, "skin") || preferences.skin);
+  } catch (error) {
+    if (error.code !== "ENOENT") console.error("[euthersync] settings read failed", error);
+  }
+  return preferences;
+}
+
+async function writeUserPreferences(user, preferences) {
+  const settingsPath = hostUserSettingsPath(user);
+  if (!settingsPath) return;
+  let existing = "";
+  try {
+    existing = await readFile(settingsPath, "utf8");
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  const next = upsertTomlString(upsertTomlString(existing, "theme", preferences.theme), "skin", preferences.skin);
+  await mkdir(path.dirname(settingsPath), { recursive: true });
+  await writeFile(settingsPath, next.endsWith("\n") ? next : `${next}\n`);
+}
+
+function normalizeUserPreferences(value) {
+  return {
+    theme: normalizeTheme(value?.theme),
+    skin: normalizeSkin(value?.skin)
+  };
+}
+
+function normalizeTheme(value) {
+  return value === "dark" || value === "royal-apothic" ? value : "light";
+}
+
+function normalizeSkin(value) {
+  return value === "glass" || value === "arcade" ? value : "classic";
+}
+
+function hostUserSettingsPath(user) {
+  if (!config.hostUsersPath) return null;
+  return path.join(path.dirname(config.hostUsersPath), "user-data", hostUserStorageName(user.id), "settings.toml");
+}
+
+function hostUserStorageName(userId) {
+  let output = "";
+  for (const byte of Buffer.from(String(userId))) {
+    const char = String.fromCharCode(byte);
+    if (/[A-Za-z0-9_-]/.test(char)) output += char;
+    else output += `%${byte.toString(16).padStart(2, "0")}`;
+  }
+  return output || "user";
+}
+
+function parseTomlString(contents, key) {
+  for (const rawLine of contents.split(/\r?\n/)) {
+    const [name, ...rest] = rawLine.split("=");
+    if (name?.trim() !== key) continue;
+    return rest.join("=").trim().replace(/^"|"$/g, "").replace(/\\"/g, "\"").replace(/\\\\/g, "\\");
+  }
+  return null;
+}
+
+function upsertTomlString(contents, key, value) {
+  const line = `${key} = "${tomlEscape(value)}"`;
+  const lines = contents.split(/\r?\n/);
+  let replaced = false;
+  const next = lines.map((rawLine) => {
+    const [name] = rawLine.split("=");
+    if (name?.trim() !== key) return rawLine;
+    replaced = true;
+    return line;
+  });
+  if (!replaced) next.push(line);
+  return next.filter((entry, index) => entry.length > 0 || index < next.length - 1).join("\n");
+}
+
+function tomlEscape(value) {
+  return String(value).replace(/\\/g, "\\\\").replace(/"/g, "\\\"");
 }
 
 async function createFeedImageVariants(originalPath, postId) {
