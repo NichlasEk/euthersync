@@ -31,6 +31,7 @@ const els = {
   feedForm: document.querySelector("#feed-form"),
   feedImage: document.querySelector("#feed-image"),
   feedCamera: document.querySelector("#feed-camera"),
+  feedCameraButton: document.querySelector("#feed-camera-button"),
   feedImageMeta: document.querySelector("#feed-image-meta"),
   library: document.querySelector("#library"),
   feed: document.querySelector("#feed"),
@@ -98,6 +99,7 @@ function bindEvents() {
   els.feedForm.addEventListener("submit", onFeedPost);
   els.feedForm.addEventListener("click", onFeedComposeClick);
   els.feedImage.addEventListener("change", renderFeedImageMeta);
+  els.feedCameraButton.addEventListener("click", onFeedCameraClick);
   els.feedCamera.addEventListener("change", onFeedCameraChange);
   els.library.addEventListener("click", onLibraryClick);
   els.feedTabs.addEventListener("click", onFeedTabsClick);
@@ -119,6 +121,8 @@ function bindEvents() {
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") closeMediaViewer();
   });
+  window.addEventListener("euthersync-camera-posted", onAndroidCameraPosted);
+  window.addEventListener("euthersync-camera-error", onAndroidCameraError);
 }
 
 async function onLogin(event) {
@@ -270,6 +274,33 @@ async function onFeedCameraChange() {
   showPanel("feed");
   showMessage("feed-message", "Camera photo posted.");
   await refreshFeed({ fresh: true });
+}
+
+function onFeedCameraClick() {
+  if (!can("feed_post")) return showMessage("feed-message", "Posting is not enabled for this account.");
+  const captionInput = els.feedForm.elements.caption;
+  const caption = String(captionInput?.value || "").trim() || "Camera photo";
+  const params = new URLSearchParams({ name: "camera-photo.jpg", caption });
+  const uploadPath = appPath(`/api/feeds/${state.activeFeedId}/uploads?${params}`);
+  if (window.EutherSyncCamera?.captureFeedPhoto) {
+    showMessage("feed-message", "Opening camera...");
+    window.EutherSyncCamera.captureFeedPhoto(uploadPath);
+    return;
+  }
+  els.feedCamera.click();
+}
+
+async function onAndroidCameraPosted() {
+  const captionInput = els.feedForm.elements.caption;
+  if (captionInput) captionInput.value = "";
+  renderFeedImageMeta();
+  showPanel("feed");
+  showMessage("feed-message", "Camera photo posted.");
+  await refreshFeed({ fresh: true });
+}
+
+function onAndroidCameraError(event) {
+  showMessage("feed-message", event.detail?.message || "Camera post failed.");
 }
 
 async function postFeedImage(file, caption) {

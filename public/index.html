@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>EutherSync</title>
-    <link rel="stylesheet" href="styles.css?v=20260607-8">
+    <link rel="stylesheet" href="styles.css?v=20260607-9">
   </head>
   <body>
     <header class="topbar">
@@ -97,10 +97,8 @@
               <input id="feed-image" name="image" type="file" accept="image/*">
             </label>
             <div class="compose-actions">
-              <label class="secondary-button">
-                Camera
-                <input id="feed-camera" name="camera" type="file" accept="image/*" capture="environment" hidden>
-              </label>
+              <button id="feed-camera-button" class="secondary-button" type="button">Camera</button>
+              <input id="feed-camera" name="camera" type="file" accept="image/*" capture="environment" hidden>
             </div>
             <div id="feed-image-meta" class="file-meta"></div>
             <button type="submit">Post</button>
@@ -155,6 +153,6 @@
       <img id="media-viewer-image" alt="">
     </div>
 
-    <script type="module" src="app.js?v=20260607-8"></script>
+    <script type="module" src="app.js?v=20260607-9"></script>
   </body>
 </html>
