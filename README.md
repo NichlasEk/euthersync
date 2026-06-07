@@ -68,10 +68,11 @@ To rebuild both fronted Android downloads from the EutherOxide repo root:
 npm run android:release-apks
 ```
 
-By default the Android wrapper opens:
+By default the Android wrapper tries these endpoints in order:
 
 ```text
 http://192.168.32.186:3000
+https://apothictech.se/euthersync/
 ```
 
 Override that at build time when needed:

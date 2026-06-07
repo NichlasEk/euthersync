@@ -1,5 +1,7 @@
 import { EutherWormhole } from "./wormhole.js";
 
+const basePath = normalizedBasePath();
+
 const state = {
   wormhole: null,
   route: { label: "Offline", kind: "offline", baseUrl: "" },
@@ -37,12 +39,12 @@ async function boot() {
 }
 
 async function connectWormhole() {
-  const response = await fetch("/api/config", { cache: "no-store" });
+  const response = await fetch(appPath("/api/config"), { cache: "no-store" });
   const config = await response.json();
   const sameOrigin = {
     name: "same-origin",
     kind: isLocalHost(location.hostname) ? "lan" : "https",
-    url: location.origin,
+    url: `${location.origin}${basePath}`,
     priority: 50
   };
   const endpoints = config.wormhole.endpoints
@@ -77,7 +79,7 @@ function bindEvents() {
 async function onLogin(event) {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
-  const response = await fetch("/api/login", {
+  const response = await fetch(appPath("/api/login"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -248,7 +250,7 @@ function renderLibrary() {
   els.library.innerHTML = state.files.map((file) => {
     const isImage = file.mimeType.startsWith("image/");
     const isVideo = file.mimeType.startsWith("video/");
-    const mediaUrl = `/media/library/${file.device.owner}/${file.device.id}/${file.relativePath}`;
+    const mediaUrl = appPath(`/media/library/${file.device.owner}/${file.device.id}/${file.relativePath}`);
     return `
       <article class="media-card">
         <div class="preview">
@@ -281,8 +283,8 @@ function renderFeed() {
           <time>${formatDate(post.post.createdAt)}</time>
         </header>
         ${post.post.caption ? `<p>${escapeHtml(post.post.caption)}</p>` : ""}
-        ${post.media && isImage ? `<img src="${escapeAttr(post.media.url)}" alt="">` : ""}
-        ${post.media && isVideo ? `<video src="${escapeAttr(post.media.url)}" controls></video>` : ""}
+        ${post.media && isImage ? `<img src="${escapeAttr(appPath(post.media.url))}" alt="">` : ""}
+        ${post.media && isVideo ? `<video src="${escapeAttr(appPath(post.media.url))}" controls></video>` : ""}
       </article>`;
   }).join("");
 }
@@ -316,7 +318,7 @@ function showPanel(panel) {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(path, { ...options, credentials: "same-origin" });
+  const response = await fetch(appPath(path), { ...options, credentials: "same-origin" });
   if (response.status === 401 && !options.allowUnauthorized) renderAuth();
   return response;
 }
@@ -356,6 +358,18 @@ function escapeHtml(value) {
 
 function escapeAttr(value) {
   return escapeHtml(value);
+}
+
+function appPath(path) {
+  if (!path.startsWith("/")) return `${basePath}/${path}`;
+  return `${basePath}${path}`;
+}
+
+function normalizedBasePath() {
+  const path = location.pathname;
+  const marker = "/euthersync";
+  if (path === marker || path.startsWith(`${marker}/`)) return marker;
+  return "";
 }
 
 function isLocalHost(hostname) {
