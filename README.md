@@ -71,7 +71,7 @@ npm run android:release-apks
 By default the Android wrapper opens:
 
 ```text
-http://eutheroxide.local:3000
+http://192.168.32.186:3000
 ```
 
 Override that at build time when needed:
