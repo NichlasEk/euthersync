@@ -18,6 +18,8 @@ const els = {
   loginForm: document.querySelector("#login-form"),
   uploadForm: document.querySelector("#upload-form"),
   feedForm: document.querySelector("#feed-form"),
+  feedImage: document.querySelector("#feed-image"),
+  feedImageMeta: document.querySelector("#feed-image-meta"),
   library: document.querySelector("#library"),
   feed: document.querySelector("#feed"),
   adminUsers: document.querySelector("#admin-users"),
@@ -69,6 +71,8 @@ function bindEvents() {
   els.logout.addEventListener("click", onLogout);
   els.uploadForm.addEventListener("submit", onUpload);
   els.feedForm.addEventListener("submit", onFeedPost);
+  els.feedForm.addEventListener("click", onFeedComposeClick);
+  els.feedImage.addEventListener("change", renderFeedImageMeta);
   els.library.addEventListener("click", onLibraryClick);
   els.adminUsers.addEventListener("change", onAdminPermissionChange);
   els.viewButtons.forEach((button) => {
@@ -160,16 +164,49 @@ async function onFeedPost(event) {
   if (!can("feed_post")) return showMessage("feed-message", "Posting is not enabled for this account.");
   const form = new FormData(event.currentTarget);
   const caption = String(form.get("caption") || "").trim();
-  if (!caption) return;
-  const response = await api("/api/feed/posts", {
+  const image = form.get("image");
+  const hasImage = image instanceof File && image.size > 0;
+  if (!caption && !hasImage) return;
+
+  showMessage("feed-message", hasImage ? "Uploading image..." : "Posting...");
+  const response = hasImage ? await postFeedImage(image, caption) : await api("/api/feed/posts", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ caption })
   });
-  if (!response.ok) return showMessage("feed-message", "Posting failed.");
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "Posting failed" }));
+    return showMessage("feed-message", error.error || "Posting failed.");
+  }
   event.currentTarget.reset();
+  renderFeedImageMeta();
   showMessage("feed-message", "Posted to the family feed.");
   await refreshFeed();
+}
+
+async function postFeedImage(file, caption) {
+  const sha256 = await sha256Hex(file);
+  const params = new URLSearchParams({ name: file.name, caption });
+  return api(`/api/feed/uploads?${params}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": file.type || "application/octet-stream",
+      "X-SHA256": sha256
+    },
+    body: file
+  });
+}
+
+function onFeedComposeClick(event) {
+  const button = event.target.closest("[data-emoji]");
+  if (!button) return;
+  const input = els.feedForm.elements.caption;
+  insertAtCursor(input, button.dataset.emoji);
+}
+
+function renderFeedImageMeta() {
+  const file = els.feedImage.files?.[0];
+  els.feedImageMeta.textContent = file ? `${file.name} · ${formatBytes(file.size)}` : "";
 }
 
 async function onAdminPermissionChange(event) {
@@ -335,6 +372,15 @@ async function sha256Hex(file) {
 
 function showMessage(id, message) {
   document.querySelector(`#${id}`).textContent = message;
+}
+
+function insertAtCursor(input, value) {
+  const start = input.selectionStart ?? input.value.length;
+  const end = input.selectionEnd ?? input.value.length;
+  input.value = `${input.value.slice(0, start)}${value}${input.value.slice(end)}`;
+  input.selectionStart = start + value.length;
+  input.selectionEnd = start + value.length;
+  input.focus();
 }
 
 function formatDate(value) {

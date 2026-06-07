@@ -126,6 +126,7 @@ async function route(req, res) {
   if (req.method === "GET" && url.pathname === "/api/library") return library(res, user);
   if (req.method === "POST" && url.pathname === "/api/publish") return publish(req, res, user);
   if (req.method === "POST" && url.pathname === "/api/feed/posts") return createFeedPost(req, res, user);
+  if (req.method === "POST" && url.pathname === "/api/feed/uploads") return createFeedUpload(req, res, url, user);
   if (req.method === "GET" && url.pathname === "/api/feed") return feed(res, user);
   if (req.method === "GET" && url.pathname.startsWith("/media/")) return media(req, res, url, user);
 
@@ -318,6 +319,67 @@ async function createFeedPost(req, res, user) {
     media: null
   };
   await writeJsonFile(path.join(paths.feedPosts(), `${post.post.id}.json`), post);
+  return json(res, 201, { post });
+}
+
+async function createFeedUpload(req, res, url, user) {
+  if (!hasPermission(user, "feed_post")) return json(res, 403, { error: "feed_post permission required" });
+
+  const caption = String(url.searchParams.get("caption") || "").trim().slice(0, 500);
+  const originalName = cleanFileName(url.searchParams.get("name") || req.headers["x-file-name"] || "feed-image.jpg");
+  const mimeType = String(req.headers["content-type"] || "application/octet-stream").split(";")[0];
+  const expectedSha = String(req.headers["x-sha256"] || "").toLowerCase();
+  if (!mimeType.startsWith("image/")) return json(res, 400, { error: "Only image uploads are supported for feed posts" });
+  if (!/^[a-f0-9]{64}$/.test(expectedSha)) return json(res, 400, { error: "X-SHA256 header is required" });
+
+  const postId = randomUUID();
+  const extension = path.extname(originalName) || extensionForMime(mimeType) || ".jpg";
+  const feedMediaName = `${postId}${extension}`;
+  const feedMediaPath = path.join(paths.feedMedia(), feedMediaName);
+  const tmpPath = `${feedMediaPath}.uploading`;
+  await mkdir(paths.feedMedia(), { recursive: true });
+
+  const hash = createHash("sha256");
+  let size = 0;
+  await new Promise((resolve, reject) => {
+    const out = createWriteStream(tmpPath);
+    req.on("data", (chunk) => {
+      size += chunk.length;
+      hash.update(chunk);
+    });
+    req.on("error", reject);
+    out.on("error", reject);
+    out.on("finish", resolve);
+    req.pipe(out);
+  });
+
+  const actualSha = hash.digest("hex");
+  if (actualSha !== expectedSha) {
+    await rm(tmpPath, { force: true });
+    return json(res, 400, { error: "SHA256 verification failed", expected: expectedSha, actual: actualSha });
+  }
+
+  await rename(tmpPath, feedMediaPath);
+  const post = {
+    post: {
+      id: postId,
+      author: user.id,
+      authorName: user.displayName,
+      caption,
+      visibility: "family",
+      createdAt: new Date().toISOString()
+    },
+    media: {
+      fileId: postId,
+      originalName,
+      mimeType,
+      size,
+      sha256: actualSha,
+      url: `/media/feed/${feedMediaName}`,
+      thumbnail: null
+    }
+  };
+  await writeJsonFile(path.join(paths.feedPosts(), `${postId}.json`), post);
   return json(res, 201, { post });
 }
 
@@ -637,6 +699,17 @@ function safeId(value) {
 
 function cleanFileName(value) {
   return path.basename(String(value)).replace(/[^a-zA-Z0-9._ -]/g, "_").slice(0, 160);
+}
+
+function extensionForMime(mimeType) {
+  return {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+    "image/heic": ".heic",
+    "image/heif": ".heif"
+  }[mimeType] || "";
 }
 
 function mime(filePath) {

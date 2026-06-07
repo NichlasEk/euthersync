@@ -23,7 +23,8 @@ body {
 }
 
 button,
-input {
+input,
+textarea {
   font: inherit;
 }
 
@@ -41,12 +42,18 @@ button:disabled {
   cursor: default;
 }
 
-input {
+input,
+textarea {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 0.65rem 0.7rem;
   background: #fff;
+}
+
+textarea {
+  min-height: 5rem;
+  resize: vertical;
 }
 
 label {
@@ -241,9 +248,29 @@ main {
 
 .feed-compose {
   width: min(760px, 100%);
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
   margin-bottom: 0.75rem;
+}
+
+.emoji-row {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.emoji-row button {
+  width: 2.4rem;
+  height: 2.4rem;
+  padding: 0;
+  background: #fff;
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+
+.file-meta {
+  min-height: 1.2rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
 }
 
 .feed-post {

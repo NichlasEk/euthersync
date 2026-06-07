@@ -81,8 +81,21 @@
           <form id="feed-form" class="feed-compose">
             <label>
               New family post
-              <input name="caption" placeholder="Share a short update" maxlength="500">
+              <textarea name="caption" placeholder="Share a short update" maxlength="500" rows="3"></textarea>
             </label>
+            <div class="emoji-row" aria-label="Add emoji">
+              <button type="button" data-emoji="❤️">❤️</button>
+              <button type="button" data-emoji="😂">😂</button>
+              <button type="button" data-emoji="🥰">🥰</button>
+              <button type="button" data-emoji="👍">👍</button>
+              <button type="button" data-emoji="🎉">🎉</button>
+              <button type="button" data-emoji="☀️">☀️</button>
+            </div>
+            <label>
+              Image
+              <input id="feed-image" name="image" type="file" accept="image/*">
+            </label>
+            <div id="feed-image-meta" class="file-meta"></div>
             <button type="submit">Post</button>
           </form>
           <p id="feed-message" class="message"></p>
