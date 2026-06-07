@@ -18,7 +18,8 @@ const paths = {
   libraryUser: (userId) => path.join(config.storagePath, "library", safeId(userId)),
   device: (userId, deviceId) => path.join(config.storagePath, "library", safeId(userId), safeId(deviceId)),
   feedPosts: () => path.join(config.storagePath, "feed", "posts"),
-  feedMedia: () => path.join(config.storagePath, "feed", "media")
+  feedMedia: () => path.join(config.storagePath, "feed", "media"),
+  feedComments: () => path.join(config.storagePath, "feed", "comments")
 };
 await ensureStorage(config.storagePath);
 if (!config.hostUsersPath) {
@@ -130,6 +131,11 @@ async function route(req, res) {
   if (req.method === "POST" && url.pathname === "/api/publish") return publish(req, res, user);
   if (req.method === "POST" && url.pathname === "/api/feed/posts") return createFeedPost(req, res, user);
   if (req.method === "POST" && url.pathname === "/api/feed/uploads") return createFeedUpload(req, res, url, user);
+  if (url.pathname.includes("/comments")) {
+    if (req.method === "GET" && url.pathname.startsWith("/api/feed/posts/")) return feedComments(res, url, user);
+    if (req.method === "POST" && url.pathname.startsWith("/api/feed/posts/")) return createFeedComment(req, res, url, user);
+    if (req.method === "DELETE" && url.pathname.startsWith("/api/feed/posts/")) return deleteFeedComment(res, url, user);
+  }
   if (req.method === "DELETE" && url.pathname.startsWith("/api/feed/posts/")) return deleteFeedPost(res, url, user);
   if (req.method === "GET" && url.pathname === "/api/feed") return feed(res, user);
   if (req.method === "GET" && url.pathname.startsWith("/media/")) return media(req, res, url, user);
@@ -306,6 +312,10 @@ async function feed(res, user) {
     if (error.code !== "ENOENT") throw error;
   }
   posts = posts.filter(Boolean).sort((a, b) => String(b.post.createdAt).localeCompare(String(a.post.createdAt)));
+  posts = await Promise.all(posts.map(async (post) => ({
+    ...post,
+    commentCount: await feedCommentCount(post.post.id)
+  })));
   return json(res, 200, { posts });
 }
 
@@ -418,7 +428,52 @@ async function deleteFeedPost(res, url, user) {
 
   await deleteFeedMedia(post.media);
   await rm(postPath, { force: true });
+  await rm(feedCommentsPath(postId), { force: true });
   return json(res, 200, { ok: true });
+}
+
+async function feedComments(res, url, user) {
+  if (!hasPermission(user, "feed_read")) return json(res, 403, { error: "feed_read permission required" });
+  const { postId, commentId, ok } = parseCommentRoute(url);
+  if (!ok || commentId) return json(res, 400, { error: "Use /api/feed/posts/:postId/comments" });
+  if (!(await feedPostExists(postId))) return json(res, 404, { error: "Post not found" });
+  return json(res, 200, { comments: await readFeedComments(postId) });
+}
+
+async function createFeedComment(req, res, url, user) {
+  if (!hasPermission(user, "feed_post")) return json(res, 403, { error: "feed_post permission required" });
+  const { postId, commentId, ok } = parseCommentRoute(url);
+  if (!ok || commentId) return json(res, 400, { error: "Use /api/feed/posts/:postId/comments" });
+  if (!(await feedPostExists(postId))) return json(res, 404, { error: "Post not found" });
+  const body = await readJson(req);
+  const text = String(body.text || "").trim().slice(0, 1000);
+  if (!text) return json(res, 400, { error: "Comment text is required" });
+  const comments = await readFeedComments(postId);
+  const comment = {
+    id: randomUUID(),
+    author: user.id,
+    authorName: user.displayName,
+    text,
+    createdAt: new Date().toISOString()
+  };
+  comments.push(comment);
+  await writeFeedComments(postId, comments);
+  return json(res, 201, { comment, commentCount: comments.length });
+}
+
+async function deleteFeedComment(res, url, user) {
+  const { postId, commentId, ok } = parseCommentRoute(url);
+  if (!ok || !commentId) return json(res, 400, { error: "Use /api/feed/posts/:postId/comments/:commentId" });
+  if (!(await feedPostExists(postId))) return json(res, 404, { error: "Post not found" });
+  const comments = await readFeedComments(postId);
+  const comment = comments.find((entry) => entry.id === commentId);
+  if (!comment) return json(res, 404, { error: "Comment not found" });
+  if (comment.author !== user.id && !hasPermission(user, "admin")) {
+    return json(res, 403, { error: "Only the comment author can delete this comment" });
+  }
+  const next = comments.filter((entry) => entry.id !== commentId);
+  await writeFeedComments(postId, next);
+  return json(res, 200, { ok: true, commentCount: next.length });
 }
 
 async function adminUsers(res, user) {
@@ -919,6 +974,45 @@ async function findUserFile(userId, fileId) {
   return null;
 }
 
+function parseCommentRoute(url) {
+  const parts = url.pathname.split("/").filter(Boolean);
+  const ok = parts[0] === "api" &&
+    parts[1] === "feed" &&
+    parts[2] === "posts" &&
+    parts[4] === "comments" &&
+    (parts.length === 5 || parts.length === 6);
+  return {
+    ok,
+    postId: safeId(parts[3] || ""),
+    commentId: safeId(parts[5] || "")
+  };
+}
+
+async function feedPostExists(postId) {
+  if (!postId) return false;
+  const post = await readJsonFile(path.join(paths.feedPosts(), `${postId}.json`), null);
+  return Boolean(post);
+}
+
+function feedCommentsPath(postId) {
+  return path.join(paths.feedComments(), `${safeId(postId)}.json`);
+}
+
+async function readFeedComments(postId) {
+  const data = await readJsonFile(feedCommentsPath(postId), { comments: [] });
+  return Array.isArray(data?.comments)
+    ? data.comments.sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
+    : [];
+}
+
+async function writeFeedComments(postId, comments) {
+  await writeJsonFile(feedCommentsPath(postId), { comments });
+}
+
+async function feedCommentCount(postId) {
+  return (await readFeedComments(postId)).length;
+}
+
 async function ensureStorage(storagePath) {
   await Promise.all([
     mkdir(path.join(storagePath, "config"), { recursive: true }),
@@ -927,6 +1021,7 @@ async function ensureStorage(storagePath) {
     mkdir(path.join(storagePath, "library"), { recursive: true }),
     mkdir(path.join(storagePath, "feed", "posts"), { recursive: true }),
     mkdir(path.join(storagePath, "feed", "media"), { recursive: true }),
+    mkdir(path.join(storagePath, "feed", "comments"), { recursive: true }),
     mkdir(path.join(storagePath, "feed", "thumbnails"), { recursive: true })
   ]);
 }

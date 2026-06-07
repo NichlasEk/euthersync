@@ -9,6 +9,7 @@ const state = {
   files: [],
   posts: [],
   users: [],
+  comments: {},
   preferences: {
     theme: localStorage.getItem("euthersync-theme") || "light",
     skin: localStorage.getItem("euthersync-skin") || "classic"
@@ -91,6 +92,7 @@ function bindEvents() {
   els.feedCamera.addEventListener("change", onFeedCameraChange);
   els.library.addEventListener("click", onLibraryClick);
   els.feed.addEventListener("click", onFeedClick);
+  els.feed.addEventListener("submit", onFeedSubmit);
   els.feed.addEventListener("scroll", onFeedScroll);
   els.feed.addEventListener("pointerdown", onFeedPointerDown);
   els.feed.addEventListener("pointermove", onFeedPointerMove);
@@ -132,6 +134,7 @@ async function onLogout() {
   state.files = [];
   state.posts = [];
   state.users = [];
+  state.comments = {};
   renderAuth();
 }
 
@@ -321,6 +324,12 @@ async function onAdminPermissionChange(event) {
 }
 
 async function onFeedClick(event) {
+  const toggle = event.target.closest("[data-comments-toggle]");
+  if (toggle) return toggleComments(toggle.dataset.commentsToggle);
+
+  const commentDelete = event.target.closest("[data-delete-comment]");
+  if (commentDelete) return deleteComment(commentDelete.dataset.postId, commentDelete.dataset.deleteComment);
+
   const button = event.target.closest("[data-delete-post]");
   if (!button) return;
   if (!confirm("Delete this post?")) return;
@@ -328,6 +337,34 @@ async function onFeedClick(event) {
   if (!response.ok) return showMessage("feed-message", "Delete failed.");
   showMessage("feed-message", "Post deleted.");
   await refreshFeed();
+}
+
+async function onFeedSubmit(event) {
+  const form = event.target.closest("[data-comment-form]");
+  if (!form) return;
+  event.preventDefault();
+  const postId = form.dataset.commentForm;
+  const input = form.elements.comment;
+  const text = String(input?.value || "").trim();
+  if (!text) return;
+  const response = await api(`/api/feed/posts/${postId}/comments`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text })
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "Comment failed" }));
+    return showMessage("feed-message", error.error || "Comment failed.");
+  }
+  const data = await response.json();
+  const entry = state.comments[postId] || { open: true, comments: [] };
+  entry.open = true;
+  entry.loaded = true;
+  entry.comments = [...entry.comments, data.comment];
+  state.comments[postId] = entry;
+  updatePostCommentCount(postId, data.commentCount ?? entry.comments.length);
+  input.value = "";
+  renderFeed();
 }
 
 async function refreshAll() {
@@ -354,7 +391,50 @@ async function refreshFeed(options = {}) {
   const response = await api(path, { cache: "no-store" });
   if (!response.ok) return;
   state.posts = (await response.json()).posts;
+  const ids = new Set(state.posts.map((post) => post.post.id));
+  Object.keys(state.comments).forEach((postId) => {
+    if (!ids.has(postId)) delete state.comments[postId];
+  });
   renderFeed();
+}
+
+async function toggleComments(postId) {
+  const entry = state.comments[postId] || { open: false, loaded: false, comments: [] };
+  entry.open = !entry.open;
+  state.comments[postId] = entry;
+  renderFeed();
+  if (entry.open && !entry.loaded) await loadComments(postId);
+}
+
+async function loadComments(postId) {
+  const entry = state.comments[postId] || { open: true, loaded: false, comments: [] };
+  entry.loading = true;
+  state.comments[postId] = entry;
+  renderFeed();
+  const response = await api(`/api/feed/posts/${postId}/comments`);
+  entry.loading = false;
+  entry.loaded = response.ok;
+  entry.comments = response.ok ? (await response.json()).comments : [];
+  state.comments[postId] = entry;
+  updatePostCommentCount(postId, entry.comments.length);
+  renderFeed();
+}
+
+async function deleteComment(postId, commentId) {
+  if (!confirm("Delete this comment?")) return;
+  const response = await api(`/api/feed/posts/${postId}/comments/${commentId}`, { method: "DELETE" });
+  if (!response.ok) return showMessage("feed-message", "Comment delete failed.");
+  const data = await response.json().catch(() => ({}));
+  const entry = state.comments[postId];
+  if (entry) entry.comments = entry.comments.filter((comment) => comment.id !== commentId);
+  updatePostCommentCount(postId, data.commentCount ?? entry?.comments?.length ?? 0);
+  renderFeed();
+}
+
+function updatePostCommentCount(postId, count) {
+  state.posts = state.posts.map((post) => (
+    post.post.id === postId ? { ...post, commentCount: count } : post
+  ));
 }
 
 async function refreshFeedIfActive(_reason, minIntervalMs = 1500) {
@@ -418,6 +498,7 @@ function renderAuth() {
   els.userLabel.textContent = state.user ? state.user.displayName : "";
   els.logout.hidden = !state.user;
   els.backupTab.hidden = !can("media_backup");
+  els.feedForm.hidden = Boolean(state.user) && !can("feed_post");
   els.settingsAdminLink.hidden = !can("admin");
   els.userSettings.hidden = !state.user;
   if (state.user && !can("media_backup")) showPanel("feed");
@@ -481,8 +562,52 @@ function renderFeed() {
             <img src="${escapeAttr(appPath(imageUrl))}" alt="" loading="lazy" decoding="async">
           </a>` : ""}
         ${post.media && isVideo ? `<video src="${escapeAttr(appPath(post.media.url))}" controls preload="metadata"></video>` : ""}
+        ${renderComments(post)}
       </article>`;
   }).join("");
+}
+
+function renderComments(post) {
+  const postId = post.post.id;
+  const entry = state.comments[postId] || { open: false, loaded: false, loading: false, comments: [] };
+  const count = post.commentCount ?? entry.comments.length;
+  return `
+    <section class="comments" data-comments="${escapeAttr(postId)}">
+      <button class="comments-toggle" type="button" data-comments-toggle="${escapeAttr(postId)}">
+        Comments · ${count}
+      </button>
+      ${entry.open ? `
+        <div class="comments-panel">
+          ${entry.loading ? `<p class="comment-empty">Loading comments...</p>` : ""}
+          ${entry.loaded && entry.comments.length === 0 ? `<p class="comment-empty">No comments yet.</p>` : ""}
+          ${entry.comments.map((comment) => renderComment(postId, comment)).join("")}
+          ${can("feed_post") ? `
+            <form class="comment-form" data-comment-form="${escapeAttr(postId)}">
+              <input name="comment" maxlength="1000" placeholder="Write a comment" autocomplete="off">
+              <button type="submit">Post</button>
+            </form>` : ""}
+        </div>` : ""}
+    </section>`;
+}
+
+function renderComment(postId, comment) {
+  const canDelete = comment.author === state.user?.id || can("admin");
+  return `
+    <article class="comment">
+      <header>
+        <strong>${escapeHtml(comment.authorName || comment.author)}</strong>
+        <div class="post-actions">
+          <time>${formatDate(comment.createdAt)}</time>
+          ${canDelete ? `
+            <button
+              type="button"
+              data-post-id="${escapeAttr(postId)}"
+              data-delete-comment="${escapeAttr(comment.id)}"
+            >Delete</button>` : ""}
+        </div>
+      </header>
+      <p>${escapeHtml(comment.text)}</p>
+    </article>`;
 }
 
 function renderAdminUsers() {

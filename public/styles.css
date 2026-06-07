@@ -194,7 +194,9 @@ body[data-theme="royal-apothic"] .tabs button,
 body[data-theme="dark"] .emoji-row button,
 body[data-theme="royal-apothic"] .emoji-row button,
 body[data-theme="dark"] .post-actions button,
-body[data-theme="royal-apothic"] .post-actions button {
+body[data-theme="royal-apothic"] .post-actions button,
+body[data-theme="dark"] .comments-toggle,
+body[data-theme="royal-apothic"] .comments-toggle {
   background: rgba(255, 255, 255, 0.06);
   color: var(--ink);
 }
@@ -411,6 +413,61 @@ main {
   background: #111;
 }
 
+.comments {
+  border-top: 1px solid var(--line);
+  padding: 0.15rem 0.9rem 0.9rem;
+}
+
+.comments-toggle {
+  width: max-content;
+  padding: 0.4rem 0;
+  background: transparent;
+  color: var(--muted);
+  border: 0;
+  font-weight: 700;
+}
+
+.comments-panel {
+  display: grid;
+  gap: 0.65rem;
+  padding-top: 0.35rem;
+}
+
+.comment {
+  display: grid;
+  gap: 0.35rem;
+  border-left: 2px solid var(--line);
+  padding-left: 0.7rem;
+}
+
+.comment header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0;
+}
+
+.comment p {
+  padding: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.comment-empty {
+  margin: 0;
+  color: var(--muted);
+}
+
+.comment-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+}
+
+.comment-form input {
+  min-width: 0;
+}
+
 .empty {
   border: 1px dashed var(--line);
   border-radius: var(--radius);
@@ -526,6 +583,8 @@ body[data-skin="arcade"] .settings-panel {
 
   .feed-compose,
   .feed-post header,
+  .comment header,
+  .comment-form,
   .post-actions,
   .settings-grid {
     grid-template-columns: 1fr;
