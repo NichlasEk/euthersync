@@ -19,7 +19,8 @@ const paths = {
   device: (userId, deviceId) => path.join(config.storagePath, "library", safeId(userId), safeId(deviceId)),
   feedPosts: () => path.join(config.storagePath, "feed", "posts"),
   feedMedia: () => path.join(config.storagePath, "feed", "media"),
-  feedComments: () => path.join(config.storagePath, "feed", "comments")
+  feedComments: () => path.join(config.storagePath, "feed", "comments"),
+  feeds: () => path.join(config.storagePath, "feed", "feeds.json")
 };
 await ensureStorage(config.storagePath);
 if (!config.hostUsersPath) {
@@ -129,6 +130,18 @@ async function route(req, res) {
   if (req.method === "POST" && url.pathname === "/api/upload") return upload(req, res, url, user);
   if (req.method === "GET" && url.pathname === "/api/library") return library(res, user);
   if (req.method === "POST" && url.pathname === "/api/publish") return publish(req, res, user);
+  if (req.method === "GET" && url.pathname === "/api/feeds") return feeds(res, user);
+  if (req.method === "POST" && url.pathname === "/api/feeds") return createFeed(req, res, user);
+  if (req.method === "PATCH" && url.pathname.startsWith("/api/feeds/")) return renameFeed(req, res, url, user);
+  if (req.method === "GET" && url.pathname.startsWith("/api/feeds/") && url.pathname.endsWith("/posts")) {
+    return feed(res, user, feedIdFromFeedRoute(url));
+  }
+  if (req.method === "POST" && url.pathname.startsWith("/api/feeds/") && url.pathname.endsWith("/posts")) {
+    return createFeedPost(req, res, user, feedIdFromFeedRoute(url));
+  }
+  if (req.method === "POST" && url.pathname.startsWith("/api/feeds/") && url.pathname.endsWith("/uploads")) {
+    return createFeedUpload(req, res, url, user, feedIdFromFeedRoute(url));
+  }
   if (req.method === "POST" && url.pathname === "/api/feed/posts") return createFeedPost(req, res, user);
   if (req.method === "POST" && url.pathname === "/api/feed/uploads") return createFeedUpload(req, res, url, user);
   if (url.pathname.includes("/comments")) {
@@ -137,7 +150,7 @@ async function route(req, res) {
     if (req.method === "DELETE" && url.pathname.startsWith("/api/feed/posts/")) return deleteFeedComment(res, url, user);
   }
   if (req.method === "DELETE" && url.pathname.startsWith("/api/feed/posts/")) return deleteFeedPost(res, url, user);
-  if (req.method === "GET" && url.pathname === "/api/feed") return feed(res, user);
+  if (req.method === "GET" && url.pathname === "/api/feed") return feed(res, user, "family");
   if (req.method === "GET" && url.pathname.startsWith("/media/")) return media(req, res, url, user);
 
   return staticFile(res, url.pathname);
@@ -282,6 +295,7 @@ async function publish(req, res, user) {
       id: postId,
       author: user.id,
       authorName: user.displayName,
+      feedId: "family",
       caption,
       visibility: "family",
       createdAt: new Date().toISOString()
@@ -299,8 +313,51 @@ async function publish(req, res, user) {
   return json(res, 201, { post });
 }
 
-async function feed(res, user) {
+async function feeds(res, user) {
   if (!hasPermission(user, "feed_read")) return json(res, 403, { error: "feed_read permission required" });
+  return json(res, 200, { feeds: await readFeeds() });
+}
+
+async function createFeed(req, res, user) {
+  if (!hasPermission(user, "feed_read")) return json(res, 403, { error: "feed_read permission required" });
+  const body = await readJson(req);
+  const name = cleanFeedName(body.name);
+  if (!name) return json(res, 400, { error: "Feed name is required" });
+  const existing = await readFeeds();
+  const feed = {
+    id: uniqueFeedId(name, existing),
+    name,
+    createdBy: user.id,
+    createdAt: new Date().toISOString(),
+    system: false
+  };
+  const next = [...existing, feed];
+  await writeFeeds(next);
+  return json(res, 201, { feed, feeds: next });
+}
+
+async function renameFeed(req, res, url, user) {
+  const feedId = feedIdFromFeedRoute(url);
+  const existing = await readFeeds();
+  const feed = existing.find((entry) => entry.id === feedId);
+  if (!feed) return json(res, 404, { error: "Feed not found" });
+  if (feed.system) return json(res, 403, { error: "System feeds cannot be renamed" });
+  if (feed.createdBy !== user.id && !hasPermission(user, "admin")) {
+    return json(res, 403, { error: "Only the feed creator can rename this feed" });
+  }
+  const body = await readJson(req);
+  const name = cleanFeedName(body.name);
+  if (!name) return json(res, 400, { error: "Feed name is required" });
+  feed.name = name;
+  feed.updatedAt = new Date().toISOString();
+  await writeFeeds(existing);
+  return json(res, 200, { feed, feeds: existing });
+}
+
+async function feed(res, user, feedId = "family") {
+  if (!hasPermission(user, "feed_read")) return json(res, 403, { error: "feed_read permission required" });
+  const selectedFeed = await findFeed(feedId);
+  if (!selectedFeed) return json(res, 404, { error: "Feed not found" });
 
   let posts = [];
   try {
@@ -311,7 +368,10 @@ async function feed(res, user) {
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
   }
-  posts = posts.filter(Boolean).sort((a, b) => String(b.post.createdAt).localeCompare(String(a.post.createdAt)));
+  posts = posts
+    .filter(Boolean)
+    .filter((post) => normalizeFeedId(post.post?.feedId || "family") === selectedFeed.id)
+    .sort((a, b) => String(b.post.createdAt).localeCompare(String(a.post.createdAt)));
   posts = await Promise.all(posts.map(async (post) => ({
     ...post,
     commentCount: await feedCommentCount(post.post.id)
@@ -335,9 +395,11 @@ async function saveUserPreferences(req, res, user) {
   return json(res, 200, preferences);
 }
 
-async function createFeedPost(req, res, user) {
+async function createFeedPost(req, res, user, routeFeedId = "family") {
   if (!hasPermission(user, "feed_post")) return json(res, 403, { error: "feed_post permission required" });
   const body = await readJson(req);
+  const selectedFeed = await findFeed(routeFeedId || body.feedId || "family");
+  if (!selectedFeed) return json(res, 404, { error: "Feed not found" });
   const caption = String(body.caption || "").trim().slice(0, 500);
   if (!caption) return json(res, 400, { error: "Caption is required" });
 
@@ -346,6 +408,7 @@ async function createFeedPost(req, res, user) {
       id: randomUUID(),
       author: user.id,
       authorName: user.displayName,
+      feedId: selectedFeed.id,
       caption,
       visibility: "family",
       createdAt: new Date().toISOString()
@@ -356,9 +419,11 @@ async function createFeedPost(req, res, user) {
   return json(res, 201, { post });
 }
 
-async function createFeedUpload(req, res, url, user) {
+async function createFeedUpload(req, res, url, user, routeFeedId = "family") {
   if (!hasPermission(user, "feed_post")) return json(res, 403, { error: "feed_post permission required" });
 
+  const selectedFeed = await findFeed(routeFeedId || url.searchParams.get("feedId") || "family");
+  if (!selectedFeed) return json(res, 404, { error: "Feed not found" });
   const caption = String(url.searchParams.get("caption") || "").trim().slice(0, 500);
   const originalName = cleanFileName(url.searchParams.get("name") || req.headers["x-file-name"] || "feed-image.jpg");
   const mimeType = String(req.headers["content-type"] || "application/octet-stream").split(";")[0];
@@ -400,6 +465,7 @@ async function createFeedUpload(req, res, url, user) {
       id: postId,
       author: user.id,
       authorName: user.displayName,
+      feedId: selectedFeed.id,
       caption,
       visibility: "family",
       createdAt: new Date().toISOString()
@@ -949,6 +1015,68 @@ async function deleteFeedMediaUrl(mediaUrl) {
   const filePath = path.join(paths.feedMedia(), cleanFileName(String(mediaUrl).slice(prefix.length)));
   if (!filePath.startsWith(paths.feedMedia())) return;
   await rm(filePath, { force: true });
+}
+
+async function readFeeds() {
+  const data = await readJsonFile(paths.feeds(), null);
+  const feeds = Array.isArray(data?.feeds) ? data.feeds : [];
+  const normalized = feeds
+    .map((feed) => ({
+      id: normalizeFeedId(feed.id),
+      name: cleanFeedName(feed.name) || "Untitled feed",
+      createdBy: String(feed.createdBy || "system"),
+      createdAt: String(feed.createdAt || new Date().toISOString()),
+      updatedAt: feed.updatedAt ? String(feed.updatedAt) : undefined,
+      system: feed.system === true
+    }))
+    .filter((feed) => feed.id);
+  if (!normalized.some((feed) => feed.id === "family")) {
+    normalized.unshift(defaultFamilyFeed());
+  }
+  return normalized;
+}
+
+async function writeFeeds(feeds) {
+  await writeJsonFile(paths.feeds(), { feeds });
+}
+
+async function findFeed(feedId) {
+  const id = normalizeFeedId(feedId || "family");
+  return (await readFeeds()).find((feed) => feed.id === id) || null;
+}
+
+function defaultFamilyFeed() {
+  return {
+    id: "family",
+    name: "Family feed",
+    createdBy: "system",
+    createdAt: "2026-06-07T00:00:00.000Z",
+    system: true
+  };
+}
+
+function uniqueFeedId(name, feeds) {
+  const base = normalizeFeedId(name) || "feed";
+  const taken = new Set(feeds.map((feed) => feed.id));
+  if (!taken.has(base)) return base;
+  for (let index = 2; index < 1000; index += 1) {
+    const candidate = `${base}-${index}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+  return `${base}-${Date.now()}`;
+}
+
+function normalizeFeedId(value) {
+  return safeId(String(value || "").trim()) || "family";
+}
+
+function cleanFeedName(value) {
+  return String(value || "").trim().replace(/\s+/g, " ").slice(0, 48);
+}
+
+function feedIdFromFeedRoute(url) {
+  const parts = url.pathname.split("/").filter(Boolean);
+  return normalizeFeedId(parts[2] || "family");
 }
 
 async function readManifest(userId, deviceId, deviceName) {

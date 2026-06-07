@@ -10,6 +10,8 @@ const state = {
   posts: [],
   users: [],
   comments: {},
+  feeds: [],
+  activeFeedId: localStorage.getItem("euthersync-active-feed") || "family",
   preferences: {
     theme: localStorage.getItem("euthersync-theme") || "dark",
     skin: localStorage.getItem("euthersync-skin") || "classic"
@@ -32,6 +34,10 @@ const els = {
   feedImageMeta: document.querySelector("#feed-image-meta"),
   library: document.querySelector("#library"),
   feed: document.querySelector("#feed"),
+  feedTabs: document.querySelector("#feed-tabs"),
+  feedTabsList: document.querySelector("#feed-tabs-list"),
+  feedAdd: document.querySelector("#feed-add"),
+  feedTitle: document.querySelector("#feed-title"),
   adminUsers: document.querySelector("#admin-users"),
   userLabel: document.querySelector("#user-label"),
   userSettings: document.querySelector("#user-settings"),
@@ -94,6 +100,7 @@ function bindEvents() {
   els.feedImage.addEventListener("change", renderFeedImageMeta);
   els.feedCamera.addEventListener("change", onFeedCameraChange);
   els.library.addEventListener("click", onLibraryClick);
+  els.feedTabs.addEventListener("click", onFeedTabsClick);
   els.feed.addEventListener("click", onFeedClick);
   els.feed.addEventListener("submit", onFeedSubmit);
   els.feed.addEventListener("scroll", onFeedScroll);
@@ -111,9 +118,6 @@ function bindEvents() {
   });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") closeMediaViewer();
-  });
-  els.viewButtons.forEach((button) => {
-    button.addEventListener("click", () => showPanel(button.dataset.view));
   });
 }
 
@@ -198,6 +202,19 @@ async function onLibraryClick(event) {
   await refreshAll();
 }
 
+async function onFeedTabsClick(event) {
+  const view = event.target.closest("[data-view]")?.dataset.view;
+  if (view) return showPanel(view);
+
+  const rename = event.target.closest("[data-rename-feed]");
+  if (rename) return renameFeed(rename.dataset.renameFeed);
+
+  const feed = event.target.closest("[data-feed-id]");
+  if (feed) return selectFeed(feed.dataset.feedId);
+
+  if (event.target.closest("#feed-add")) return createFeed();
+}
+
 async function onFeedPost(event) {
   event.preventDefault();
   if (!can("feed_post")) return showMessage("feed-message", "Posting is not enabled for this account.");
@@ -208,7 +225,7 @@ async function onFeedPost(event) {
   if (!caption && !hasImage) return;
 
   showMessage("feed-message", hasImage ? "Preparing image..." : "Posting...");
-  const response = hasImage ? await postFeedImage(image, caption) : await api("/api/feed/posts", {
+  const response = hasImage ? await postFeedImage(image, caption) : await api(`/api/feeds/${state.activeFeedId}/posts`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ caption })
@@ -258,7 +275,7 @@ async function onFeedCameraChange() {
 async function postFeedImage(file, caption) {
   const sha256 = await sha256Hex(file);
   const params = new URLSearchParams({ name: file.name, caption });
-  return uploadWithProgress(`/api/feed/uploads?${params}`, file, {
+  return uploadWithProgress(`/api/feeds/${state.activeFeedId}/uploads?${params}`, file, {
     "Content-Type": file.type || "application/octet-stream",
     "X-SHA256": sha256
   }, (percent) => {
@@ -396,6 +413,7 @@ async function onFeedSubmit(event) {
 }
 
 async function refreshAll() {
+  await refreshFeeds();
   const tasks = [refreshFeed()];
   if (can("media_backup")) tasks.push(refreshLibrary());
   if (can("admin")) tasks.push(refreshUsers());
@@ -415,7 +433,9 @@ async function refreshLibrary() {
 }
 
 async function refreshFeed(options = {}) {
-  const path = options.fresh ? `/api/feed?ts=${Date.now()}` : "/api/feed";
+  const path = options.fresh
+    ? `/api/feeds/${state.activeFeedId}/posts?ts=${Date.now()}`
+    : `/api/feeds/${state.activeFeedId}/posts`;
   const response = await api(path, { cache: "no-store" });
   if (!response.ok) return;
   state.posts = (await response.json()).posts;
@@ -424,6 +444,55 @@ async function refreshFeed(options = {}) {
     if (!ids.has(postId)) delete state.comments[postId];
   });
   renderFeed();
+}
+
+async function refreshFeeds() {
+  const response = await api("/api/feeds", { cache: "no-store" });
+  if (!response.ok) return;
+  state.feeds = (await response.json()).feeds;
+  if (!state.feeds.some((feed) => feed.id === state.activeFeedId)) {
+    state.activeFeedId = "family";
+    localStorage.setItem("euthersync-active-feed", state.activeFeedId);
+  }
+  renderFeedTabs();
+}
+
+async function selectFeed(feedId) {
+  state.activeFeedId = normalizeFeedId(feedId);
+  localStorage.setItem("euthersync-active-feed", state.activeFeedId);
+  state.comments = {};
+  renderFeedTabs();
+  showPanel("feed");
+  await refreshFeed({ fresh: true });
+}
+
+async function createFeed() {
+  const name = prompt("Feed name");
+  if (!name?.trim()) return;
+  const response = await api("/api/feeds", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name })
+  });
+  if (!response.ok) return showMessage("feed-message", "Feed could not be created.");
+  const data = await response.json();
+  state.feeds = data.feeds;
+  await selectFeed(data.feed.id);
+}
+
+async function renameFeed(feedId) {
+  const feed = state.feeds.find((entry) => entry.id === feedId);
+  if (!feed) return;
+  const name = prompt("Feed name", feed.name);
+  if (!name?.trim() || name.trim() === feed.name) return;
+  const response = await api(`/api/feeds/${feedId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name })
+  });
+  if (!response.ok) return showMessage("feed-message", "Feed could not be renamed.");
+  state.feeds = (await response.json()).feeds;
+  renderFeedTabs();
 }
 
 async function toggleComments(postId) {
@@ -530,6 +599,7 @@ function renderAuth() {
   els.settingsAdminLink.hidden = !can("admin");
   els.userSettings.hidden = !state.user;
   if (state.user) showPanel("feed");
+  renderFeedTabs();
   renderSettings();
 }
 
@@ -564,8 +634,9 @@ function renderLibrary() {
 }
 
 function renderFeed() {
+  const activeFeed = currentFeed();
   if (state.posts.length === 0) {
-    els.feed.innerHTML = `<p class="empty">No family posts yet.</p>`;
+    els.feed.innerHTML = `<p class="empty">No posts in ${escapeHtml(activeFeed?.name || "this feed")} yet.</p>`;
     return;
   }
   els.feed.innerHTML = state.posts.map((post) => {
@@ -592,6 +663,26 @@ function renderFeed() {
         ${post.media && isVideo ? `<video src="${escapeAttr(appPath(post.media.url))}" controls preload="metadata"></video>` : ""}
       </article>`;
   }).join("");
+}
+
+function renderFeedTabs() {
+  els.feedTitle.textContent = currentFeed()?.name || "Family feed";
+  els.feedTabsList.innerHTML = state.feeds.map((feed) => {
+    const canRename = !feed.system && (feed.createdBy === state.user?.id || can("admin"));
+    return `
+      <span class="feed-tab-item">
+        <button
+          type="button"
+          data-feed-id="${escapeAttr(feed.id)}"
+          class="${feed.id === state.activeFeedId ? "active" : ""}"
+        >${escapeHtml(feed.name)}</button>
+        ${canRename ? `<button class="feed-rename" type="button" data-rename-feed="${escapeAttr(feed.id)}" aria-label="Rename ${escapeAttr(feed.name)}">Edit</button>` : ""}
+      </span>`;
+  }).join("");
+}
+
+function currentFeed() {
+  return state.feeds.find((feed) => feed.id === state.activeFeedId) || state.feeds.find((feed) => feed.id === "family");
 }
 
 function renderComments(post) {
@@ -679,6 +770,7 @@ function showPanel(panel) {
     button.classList.toggle("active", button.dataset.view === panel);
   });
   els.userSettings.classList.toggle("active", panel === "settings");
+  renderFeedTabs();
   if (can("admin") && panel === "admin") refreshUsers();
   if (panel === "feed") refreshFeedIfActive("show", 0);
   if (panel === "settings") renderSettings();
@@ -699,6 +791,10 @@ function normalizeTheme(value) {
 
 function normalizeSkin(value) {
   return value === "glass" || value === "arcade" ? value : "classic";
+}
+
+function normalizeFeedId(value) {
+  return String(value || "family").toLowerCase().replace(/[^a-z0-9_-]/g, "-").replace(/-+/g, "-").slice(0, 80) || "family";
 }
 
 function applyAppearance() {
