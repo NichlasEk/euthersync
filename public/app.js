@@ -11,7 +11,7 @@ const state = {
   users: [],
   comments: {},
   preferences: {
-    theme: localStorage.getItem("euthersync-theme") || "light",
+    theme: localStorage.getItem("euthersync-theme") || "dark",
     skin: localStorage.getItem("euthersync-skin") || "classic"
   },
   feedRefreshInFlight: false,
@@ -695,7 +695,7 @@ function renderSettings() {
 }
 
 function normalizeTheme(value) {
-  return value === "dark" || value === "royal-apothic" ? value : "light";
+  return value === "light" || value === "royal-apothic" ? value : "dark";
 }
 
 function normalizeSkin(value) {

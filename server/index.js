@@ -326,7 +326,12 @@ async function userPreferences(res, user) {
 async function saveUserPreferences(req, res, user) {
   const body = await readJson(req);
   const preferences = normalizeUserPreferences(body);
-  await writeUserPreferences(user, preferences);
+  try {
+    await writeUserPreferences(user, preferences);
+  } catch (error) {
+    console.error("[euthersync] settings write failed", error);
+    return json(res, 500, { error: "Settings TOML save failed" });
+  }
   return json(res, 200, preferences);
 }
 
@@ -788,7 +793,7 @@ function tomlKey(line) {
 }
 
 async function readUserPreferences(user) {
-  const preferences = { theme: "light", skin: "classic" };
+  const preferences = { theme: "dark", skin: "classic" };
   const settingsPath = hostUserSettingsPath(user);
   if (!settingsPath) return preferences;
   try {
@@ -823,7 +828,7 @@ function normalizeUserPreferences(value) {
 }
 
 function normalizeTheme(value) {
-  return value === "dark" || value === "royal-apothic" ? value : "light";
+  return value === "light" || value === "royal-apothic" ? value : "dark";
 }
 
 function normalizeSkin(value) {
