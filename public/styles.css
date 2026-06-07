@@ -494,6 +494,13 @@ body[data-skin="arcade"] .settings-panel {
   color: var(--ink);
 }
 
+.permission-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.8rem;
+}
+
 .toggle input {
   width: auto;
 }
@@ -520,11 +527,19 @@ body[data-skin="arcade"] .settings-panel {
   .feed-compose,
   .feed-post header,
   .post-actions,
-  .admin-row,
   .settings-grid {
     grid-template-columns: 1fr;
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .admin-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .permission-toggles {
+    justify-content: flex-start;
   }
 
   .feed {

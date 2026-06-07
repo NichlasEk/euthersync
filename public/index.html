@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>EutherSync</title>
-    <link rel="stylesheet" href="styles.css?v=20260607-1">
+    <link rel="stylesheet" href="styles.css?v=20260607-3">
   </head>
   <body>
     <header class="topbar">
@@ -41,7 +41,6 @@
         <nav class="tabs" aria-label="Views">
           <button id="backup-tab" class="active" type="button" data-view="backup">Private library</button>
           <button type="button" data-view="feed">Family feed</button>
-          <button id="admin-tab" type="button" data-view="admin" hidden>Admin</button>
         </nav>
 
         <section data-panel="backup">
@@ -140,12 +139,16 @@
                 <button type="button" data-skin="arcade">Arcade</button>
               </div>
             </div>
+            <div id="settings-admin-link" hidden>
+              <h3>Admin</h3>
+              <button class="secondary-button" type="button" data-settings-view="admin">User permissions</button>
+            </div>
             <p id="settings-message" class="message"></p>
           </div>
         </section>
       </section>
     </main>
 
-    <script type="module" src="app.js?v=20260607-1"></script>
+    <script type="module" src="app.js?v=20260607-3"></script>
   </body>
 </html>

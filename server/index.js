@@ -435,22 +435,28 @@ async function adminUsers(res, user) {
 
 async function adminPermissions(req, res, url, user) {
   if (!hasPermission(user, "admin")) return json(res, 403, { error: "admin permission required" });
-  if (config.hostUsersPath) {
-    return json(res, 409, { error: "Users and permissions are managed by EutherOxide users.toml" });
-  }
   const parts = url.pathname.split("/").filter(Boolean);
   const userId = safeId(parts[3] || "");
   const permission = parts[4];
-  if (parts.length !== 5 || permission !== "media_backup") {
-    return json(res, 400, { error: "Use /api/admin/users/:userId/media_backup" });
+  if (parts.length !== 5 || !["media_backup", "feed_post", "admin"].includes(permission)) {
+    return json(res, 400, { error: "Use /api/admin/users/:userId/:permission" });
   }
 
   const target = await getUser(userId);
   if (!target) return json(res, 404, { error: "User not found" });
 
   const body = await readJson(req);
+  if (config.hostUsersPath) {
+    try {
+      await writeHostUserPermission(userId, permission, Boolean(body.enabled));
+    } catch (error) {
+      return json(res, 400, { error: error.message || "Permission update failed" });
+    }
+    return json(res, 200, { user: publicUser(await getUser(userId)) });
+  }
+
   target.permissions = normalizePermissions(target.permissions);
-  target.permissions.media_backup = Boolean(body.enabled);
+  target.permissions[permission] = Boolean(body.enabled);
   await writeJsonFile(path.join(paths.users(), `${target.id}.json`), target);
   return json(res, 200, { user: publicUser(target) });
 }
@@ -626,11 +632,16 @@ function parseTomlValue(value) {
 
 function hostPermissions(user) {
   const enabled = user.banned !== true;
+  const admin = enabled && (user.admin === true || user.name === "nichlas");
+  const mediaBackup =
+    user.euthersync_media_backup === true ||
+    (user.euthersync_media_backup !== false &&
+      (user.admin === true || user.can_upload_roms === true || user.can_manage_library === true));
   return {
     feed_read: enabled,
-    feed_post: enabled,
-    media_backup: enabled && (user.admin === true || user.can_upload_roms === true || user.can_manage_library === true),
-    admin: enabled && user.admin === true
+    feed_post: enabled && user.euthersync_feed_post !== false,
+    media_backup: enabled && mediaBackup,
+    admin
   };
 }
 
@@ -649,6 +660,76 @@ function normalizePermissions(permissions = {}) {
 
 function hasPermission(user, permission) {
   return normalizePermissions(user?.permissions)[permission] === true;
+}
+
+async function writeHostUserPermission(userId, permission, enabled) {
+  const contents = await readFile(config.hostUsersPath, "utf8");
+  const next = updateHostUserPermissionToml(contents, userId, permission, enabled);
+  await writeFile(config.hostUsersPath, next.endsWith("\n") ? next : `${next}\n`);
+}
+
+function updateHostUserPermissionToml(contents, userId, permission, enabled) {
+  const field = hostPermissionField(permission);
+  const lines = contents.split(/\r?\n/);
+  const users = hostUserBlocks(lines);
+  const target = users.find((entry) => entry.name?.toLowerCase() === userId.toLowerCase());
+  if (!target) throw new Error("User not found");
+  if (permission === "admin" && target.name === "nichlas" && !enabled) {
+    throw new Error("Super user admin permission cannot be removed");
+  }
+  if (permission === "admin" && target.admin === true && !enabled) {
+    const activeAdmins = users.filter((entry) => !entry.banned && (entry.admin || entry.name === "nichlas")).length;
+    if (activeAdmins <= 1) throw new Error("At least one active admin is required");
+  }
+
+  const line = `${field} = ${enabled ? "true" : "false"}`;
+  let inserted = false;
+  for (let index = target.start + 1; index < target.end; index += 1) {
+    if (tomlKey(lines[index]) !== field) continue;
+    lines[index] = line;
+    inserted = true;
+    break;
+  }
+  if (!inserted) {
+    lines.splice(target.end, 0, line);
+  }
+  return lines.join("\n");
+}
+
+function hostPermissionField(permission) {
+  if (permission === "media_backup") return "euthersync_media_backup";
+  if (permission === "feed_post") return "euthersync_feed_post";
+  if (permission === "admin") return "admin";
+  throw new Error("Invalid permission");
+}
+
+function hostUserBlocks(lines) {
+  const blocks = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    if (lines[index].trim() !== "[[user]]") continue;
+    const start = index;
+    let end = lines.length;
+    for (let cursor = index + 1; cursor < lines.length; cursor += 1) {
+      if (lines[cursor].trim() === "[[user]]") {
+        end = cursor;
+        break;
+      }
+    }
+    const block = { start, end, name: "", admin: false, banned: false };
+    for (let cursor = start + 1; cursor < end; cursor += 1) {
+      const key = tomlKey(lines[cursor]);
+      if (key === "name") block.name = parseTomlValue(lines[cursor].split("=").slice(1).join("="));
+      if (key === "admin") block.admin = parseTomlValue(lines[cursor].split("=").slice(1).join("=")) === true;
+      if (key === "banned") block.banned = parseTomlValue(lines[cursor].split("=").slice(1).join("=")) === true;
+    }
+    blocks.push(block);
+  }
+  return blocks;
+}
+
+function tomlKey(line) {
+  const match = line.trim().match(/^([A-Za-z0-9_]+)\s*=/);
+  return match?.[1] || "";
 }
 
 async function readUserPreferences(user) {

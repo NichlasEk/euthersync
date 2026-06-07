@@ -36,7 +36,7 @@ const els = {
   userSettings: document.querySelector("#user-settings"),
   logout: document.querySelector("#logout"),
   backupTab: document.querySelector("#backup-tab"),
-  adminTab: document.querySelector("#admin-tab"),
+  settingsAdminLink: document.querySelector("#settings-admin-link"),
   viewButtons: document.querySelectorAll("[data-view]"),
   views: document.querySelectorAll("[data-panel]")
 };
@@ -295,6 +295,8 @@ function resetFeedPull() {
 }
 
 function onSettingsClick(event) {
+  const view = event.target.closest("[data-settings-view]")?.dataset.settingsView;
+  if (view) return showPanel(view);
   const theme = event.target.closest("[data-theme]")?.dataset.theme;
   if (theme) return setPreference("theme", normalizeTheme(theme));
   const skin = event.target.closest("[data-skin]")?.dataset.skin;
@@ -302,16 +304,17 @@ function onSettingsClick(event) {
 }
 
 async function onAdminPermissionChange(event) {
-  const input = event.target.closest("[data-media-backup-user]");
+  const input = event.target.closest("[data-admin-permission-user]");
   if (!input) return;
-  const response = await api(`/api/admin/users/${input.dataset.mediaBackupUser}/media_backup`, {
+  const response = await api(`/api/admin/users/${input.dataset.adminPermissionUser}/${input.dataset.adminPermission}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ enabled: input.checked })
   });
   if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "Permission update failed" }));
     input.checked = !input.checked;
-    return showMessage("admin-message", "Permission update failed.");
+    return showMessage("admin-message", error.error || "Permission update failed.");
   }
   showMessage("admin-message", "Permission updated.");
   await refreshUsers();
@@ -415,7 +418,7 @@ function renderAuth() {
   els.userLabel.textContent = state.user ? state.user.displayName : "";
   els.logout.hidden = !state.user;
   els.backupTab.hidden = !can("media_backup");
-  els.adminTab.hidden = !can("admin");
+  els.settingsAdminLink.hidden = !can("admin");
   els.userSettings.hidden = !state.user;
   if (state.user && !can("media_backup")) showPanel("feed");
   if (state.user && can("media_backup")) showPanel("backup");
@@ -488,17 +491,32 @@ function renderAdminUsers() {
     return;
   }
   els.adminUsers.innerHTML = state.users.map((user) => `
-    <label class="admin-row">
+    <article class="admin-row">
       <span>
         <strong>${escapeHtml(user.displayName)}</strong>
         <small>${escapeHtml(user.id)}${user.permissions.admin ? " · admin" : ""}</small>
       </span>
-      <span class="toggle">
-        <input type="checkbox" data-media-backup-user="${escapeAttr(user.id)}" ${user.permissions.media_backup ? "checked" : ""}>
-        media_backup
-      </span>
-    </label>
+      <div class="permission-toggles">
+        ${permissionToggle(user, "media_backup", "File sync")}
+        ${permissionToggle(user, "feed_post", "Post feed")}
+        ${permissionToggle(user, "admin", "Admin")}
+      </div>
+    </article>
   `).join("");
+}
+
+function permissionToggle(user, permission, label) {
+  return `
+    <label class="toggle">
+      <input
+        type="checkbox"
+        data-admin-permission-user="${escapeAttr(user.id)}"
+        data-admin-permission="${escapeAttr(permission)}"
+        ${user.permissions[permission] ? "checked" : ""}
+        ${user.id === state.user?.id && permission === "admin" ? "disabled" : ""}
+      >
+      ${escapeHtml(label)}
+    </label>`;
 }
 
 function showPanel(panel) {
@@ -509,6 +527,7 @@ function showPanel(panel) {
     button.classList.toggle("active", button.dataset.view === panel);
   });
   els.userSettings.classList.toggle("active", panel === "settings");
+  if (can("admin") && panel === "admin") refreshUsers();
   if (panel === "feed") refreshFeedIfActive("show", 0);
   if (panel === "settings") renderSettings();
 }
