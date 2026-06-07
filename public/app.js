@@ -169,7 +169,7 @@ async function onFeedPost(event) {
   const hasImage = image instanceof File && image.size > 0;
   if (!caption && !hasImage) return;
 
-  showMessage("feed-message", hasImage ? "Uploading image..." : "Posting...");
+  showMessage("feed-message", hasImage ? "Preparing image..." : "Posting...");
   const response = hasImage ? await postFeedImage(image, caption) : await api("/api/feed/posts", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -182,19 +182,18 @@ async function onFeedPost(event) {
   event.currentTarget.reset();
   renderFeedImageMeta();
   showMessage("feed-message", "Posted to the family feed.");
-  await refreshFeed();
+  await refreshFeed({ fresh: true });
+  showPanel("feed");
 }
 
 async function postFeedImage(file, caption) {
   const sha256 = await sha256Hex(file);
   const params = new URLSearchParams({ name: file.name, caption });
-  return api(`/api/feed/uploads?${params}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": file.type || "application/octet-stream",
-      "X-SHA256": sha256
-    },
-    body: file
+  return uploadWithProgress(`/api/feed/uploads?${params}`, file, {
+    "Content-Type": file.type || "application/octet-stream",
+    "X-SHA256": sha256
+  }, (percent) => {
+    showMessage("feed-message", `Uploading image... ${percent}%`);
   });
 }
 
@@ -255,8 +254,9 @@ async function refreshLibrary() {
   renderLibrary();
 }
 
-async function refreshFeed() {
-  const response = await api("/api/feed");
+async function refreshFeed(options = {}) {
+  const path = options.fresh ? `/api/feed?ts=${Date.now()}` : "/api/feed";
+  const response = await api(path, { cache: "no-store" });
   if (!response.ok) return;
   state.posts = (await response.json()).posts;
   renderFeed();
@@ -378,6 +378,34 @@ async function api(path, options = {}) {
   const response = await fetch(appPath(path), { ...options, credentials: "same-origin" });
   if (response.status === 401 && !options.allowUnauthorized) renderAuth();
   return response;
+}
+
+function uploadWithProgress(path, body, headers, onProgress) {
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", appPath(path));
+    xhr.withCredentials = true;
+    Object.entries(headers).forEach(([name, value]) => xhr.setRequestHeader(name, value));
+    xhr.upload.addEventListener("progress", (event) => {
+      if (!event.lengthComputable) return showMessage("feed-message", "Uploading image...");
+      onProgress(Math.max(1, Math.min(99, Math.round((event.loaded / event.total) * 100))));
+    });
+    xhr.addEventListener("load", () => {
+      resolve({
+        ok: xhr.status >= 200 && xhr.status < 300,
+        status: xhr.status,
+        json: async () => JSON.parse(xhr.responseText || "{}")
+      });
+    });
+    xhr.addEventListener("error", () => {
+      resolve({
+        ok: false,
+        status: 0,
+        json: async () => ({ error: "Upload failed" })
+      });
+    });
+    xhr.send(body);
+  });
 }
 
 function can(permission) {
