@@ -61,6 +61,7 @@ async function loadConfig() {
     port: Number(process.env.EUTHERSYNC_PORT || fileConfig.port || 3000),
     publicUrl: process.env.EUTHERSYNC_PUBLIC_URL || fileConfig.publicUrl || "https://example.com",
     localUrl: process.env.EUTHERSYNC_LOCAL_URL || fileConfig.localUrl || "http://eutheroxide.local:3000",
+    imageMagickBin: process.env.EUTHERSYNC_IMAGE_MAGICK_BIN || fileConfig.imageMagickBin || "magick",
     hostUsersPath: process.env.EUTHERSYNC_HOST_USERS || fileConfig.hostUsersPath || "",
     hostVerifyBin:
       process.env.EUTHERSYNC_HOST_VERIFY_BIN ||
@@ -127,6 +128,7 @@ async function route(req, res) {
   if (req.method === "POST" && url.pathname === "/api/publish") return publish(req, res, user);
   if (req.method === "POST" && url.pathname === "/api/feed/posts") return createFeedPost(req, res, user);
   if (req.method === "POST" && url.pathname === "/api/feed/uploads") return createFeedUpload(req, res, url, user);
+  if (req.method === "DELETE" && url.pathname.startsWith("/api/feed/posts/")) return deleteFeedPost(res, url, user);
   if (req.method === "GET" && url.pathname === "/api/feed") return feed(res, user);
   if (req.method === "GET" && url.pathname.startsWith("/media/")) return media(req, res, url, user);
 
@@ -259,10 +261,13 @@ async function publish(req, res, user) {
   const postId = randomUUID();
   const sourcePath = path.join(paths.device(user.id, found.deviceId), found.file.relativePath);
   const extension = path.extname(found.file.originalName) || path.extname(found.file.relativePath) || ".bin";
-  const feedMediaName = `${postId}${extension}`;
-  const feedMediaPath = path.join(paths.feedMedia(), feedMediaName);
+  const originalMediaName = `${postId}-original${extension}`;
+  const originalMediaPath = path.join(paths.feedMedia(), originalMediaName);
   await mkdir(paths.feedMedia(), { recursive: true });
-  await copyFile(sourcePath, feedMediaPath);
+  await copyFile(sourcePath, originalMediaPath);
+  const variants = found.file.mimeType.startsWith("image/")
+    ? await createFeedImageVariants(originalMediaPath, postId)
+    : { feedUrl: `/media/feed/${originalMediaName}`, thumbnailUrl: null };
 
   const post = {
     post: {
@@ -277,8 +282,9 @@ async function publish(req, res, user) {
       fileId: found.file.id,
       originalName: found.file.originalName,
       mimeType: found.file.mimeType,
-      url: `/media/feed/${feedMediaName}`,
-      thumbnail: null
+      url: variants.feedUrl,
+      originalUrl: `/media/feed/${originalMediaName}`,
+      thumbnail: variants.thumbnailUrl
     }
   };
   await writeJsonFile(path.join(paths.feedPosts(), `${postId}.json`), post);
@@ -334,9 +340,9 @@ async function createFeedUpload(req, res, url, user) {
 
   const postId = randomUUID();
   const extension = path.extname(originalName) || extensionForMime(mimeType) || ".jpg";
-  const feedMediaName = `${postId}${extension}`;
-  const feedMediaPath = path.join(paths.feedMedia(), feedMediaName);
-  const tmpPath = `${feedMediaPath}.uploading`;
+  const originalMediaName = `${postId}-original${extension}`;
+  const originalMediaPath = path.join(paths.feedMedia(), originalMediaName);
+  const tmpPath = `${originalMediaPath}.uploading`;
   await mkdir(paths.feedMedia(), { recursive: true });
 
   const hash = createHash("sha256");
@@ -359,7 +365,8 @@ async function createFeedUpload(req, res, url, user) {
     return json(res, 400, { error: "SHA256 verification failed", expected: expectedSha, actual: actualSha });
   }
 
-  await rename(tmpPath, feedMediaPath);
+  await rename(tmpPath, originalMediaPath);
+  const variants = await createFeedImageVariants(originalMediaPath, postId);
   const post = {
     post: {
       id: postId,
@@ -375,12 +382,30 @@ async function createFeedUpload(req, res, url, user) {
       mimeType,
       size,
       sha256: actualSha,
-      url: `/media/feed/${feedMediaName}`,
-      thumbnail: null
+      url: variants.feedUrl,
+      originalUrl: `/media/feed/${originalMediaName}`,
+      thumbnail: variants.thumbnailUrl
     }
   };
   await writeJsonFile(path.join(paths.feedPosts(), `${postId}.json`), post);
   return json(res, 201, { post });
+}
+
+async function deleteFeedPost(res, url, user) {
+  const parts = url.pathname.split("/").filter(Boolean);
+  const postId = safeId(parts[3] || "");
+  if (parts.length !== 4 || !postId) return json(res, 400, { error: "Use /api/feed/posts/:postId" });
+
+  const postPath = path.join(paths.feedPosts(), `${postId}.json`);
+  const post = await readJsonFile(postPath, null);
+  if (!post) return json(res, 404, { error: "Post not found" });
+  if (post.post?.author !== user.id && !hasPermission(user, "admin")) {
+    return json(res, 403, { error: "Only the author can delete this post" });
+  }
+
+  await deleteFeedMedia(post.media);
+  await rm(postPath, { force: true });
+  return json(res, 200, { ok: true });
 }
 
 async function adminUsers(res, user) {
@@ -611,6 +636,80 @@ function normalizePermissions(permissions = {}) {
 
 function hasPermission(user, permission) {
   return normalizePermissions(user?.permissions)[permission] === true;
+}
+
+async function createFeedImageVariants(originalPath, postId) {
+  const feedName = `${postId}-feed.webp`;
+  const thumbName = `${postId}-thumb.webp`;
+  const feedPath = path.join(paths.feedMedia(), feedName);
+  const thumbPath = path.join(paths.feedMedia(), thumbName);
+
+  try {
+    await runImageMagick([
+      originalPath,
+      "-auto-orient",
+      "-strip",
+      "-resize",
+      "1280x1280>",
+      "-quality",
+      "82",
+      feedPath
+    ]);
+    await runImageMagick([
+      originalPath,
+      "-auto-orient",
+      "-strip",
+      "-resize",
+      "420x420^",
+      "-gravity",
+      "center",
+      "-extent",
+      "420x420",
+      "-quality",
+      "78",
+      thumbPath
+    ]);
+    return {
+      feedUrl: `/media/feed/${feedName}`,
+      thumbnailUrl: `/media/feed/${thumbName}`
+    };
+  } catch (error) {
+    console.error("[euthersync] image variant generation failed", error);
+    return {
+      feedUrl: `/media/feed/${path.basename(originalPath)}`,
+      thumbnailUrl: null
+    };
+  }
+}
+
+async function runImageMagick(args) {
+  await new Promise((resolve, reject) => {
+    const child = spawn(config.imageMagickBin, args, { stdio: ["ignore", "ignore", "pipe"] });
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) return resolve();
+      reject(new Error(stderr.trim() || `ImageMagick exited with ${code}`));
+    });
+  });
+}
+
+async function deleteFeedMedia(media) {
+  if (!media) return;
+  const urls = new Set([media.url, media.originalUrl, media.thumbnail].filter(Boolean));
+  await Promise.all([...urls].map((mediaUrl) => deleteFeedMediaUrl(mediaUrl)));
+}
+
+async function deleteFeedMediaUrl(mediaUrl) {
+  const prefix = "/media/feed/";
+  if (!String(mediaUrl).startsWith(prefix)) return;
+  const filePath = path.join(paths.feedMedia(), cleanFileName(String(mediaUrl).slice(prefix.length)));
+  if (!filePath.startsWith(paths.feedMedia())) return;
+  await rm(filePath, { force: true });
 }
 
 async function readManifest(userId, deviceId, deviceName) {

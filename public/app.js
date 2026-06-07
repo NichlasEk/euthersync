@@ -74,6 +74,7 @@ function bindEvents() {
   els.feedForm.addEventListener("click", onFeedComposeClick);
   els.feedImage.addEventListener("change", renderFeedImageMeta);
   els.library.addEventListener("click", onLibraryClick);
+  els.feed.addEventListener("click", onFeedClick);
   els.adminUsers.addEventListener("change", onAdminPermissionChange);
   els.viewButtons.forEach((button) => {
     button.addEventListener("click", () => showPanel(button.dataset.view));
@@ -225,6 +226,16 @@ async function onAdminPermissionChange(event) {
   await refreshUsers();
 }
 
+async function onFeedClick(event) {
+  const button = event.target.closest("[data-delete-post]");
+  if (!button) return;
+  if (!confirm("Delete this post?")) return;
+  const response = await api(`/api/feed/posts/${button.dataset.deletePost}`, { method: "DELETE" });
+  if (!response.ok) return showMessage("feed-message", "Delete failed.");
+  showMessage("feed-message", "Post deleted.");
+  await refreshFeed();
+}
+
 async function refreshAll() {
   const tasks = [refreshFeed()];
   if (can("media_backup")) tasks.push(refreshLibrary());
@@ -313,15 +324,24 @@ function renderFeed() {
   els.feed.innerHTML = state.posts.map((post) => {
     const isImage = post.media?.mimeType?.startsWith("image/");
     const isVideo = post.media?.mimeType?.startsWith("video/");
+    const imageUrl = post.media?.url;
+    const fullImageUrl = post.media?.originalUrl || post.media?.url;
+    const canDelete = post.post.author === state.user?.id || can("admin");
     return `
       <article class="feed-post">
         <header>
           <strong>${escapeHtml(post.post.authorName || post.post.author)}</strong>
-          <time>${formatDate(post.post.createdAt)}</time>
+          <div class="post-actions">
+            <time>${formatDate(post.post.createdAt)}</time>
+            ${canDelete ? `<button type="button" data-delete-post="${escapeAttr(post.post.id)}">Delete</button>` : ""}
+          </div>
         </header>
         ${post.post.caption ? `<p>${escapeHtml(post.post.caption)}</p>` : ""}
-        ${post.media && isImage ? `<img src="${escapeAttr(appPath(post.media.url))}" alt="">` : ""}
-        ${post.media && isVideo ? `<video src="${escapeAttr(appPath(post.media.url))}" controls></video>` : ""}
+        ${post.media && isImage ? `
+          <a class="feed-image-link" href="${escapeAttr(appPath(fullImageUrl))}" target="_blank" rel="noopener">
+            <img src="${escapeAttr(appPath(imageUrl))}" alt="" loading="lazy" decoding="async">
+          </a>` : ""}
+        ${post.media && isVideo ? `<video src="${escapeAttr(appPath(post.media.url))}" controls preload="metadata"></video>` : ""}
       </article>`;
   }).join("");
 }

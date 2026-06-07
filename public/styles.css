@@ -291,6 +291,19 @@ main {
   padding-top: 0.9rem;
 }
 
+.post-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.post-actions button {
+  padding: 0.35rem 0.55rem;
+  background: #fff;
+  color: #8b2d2d;
+  border: 1px solid var(--line);
+}
+
 .feed-post time {
   color: var(--muted);
   font-size: 0.9rem;
@@ -365,6 +378,8 @@ main {
   }
 
   .feed-compose,
+  .feed-post header,
+  .post-actions,
   .admin-row {
     grid-template-columns: 1fr;
     flex-direction: column;
