@@ -3,6 +3,7 @@ import { randomUUID, randomBytes, createHash, timingSafeEqual, scryptSync } from
 import { createReadStream, createWriteStream } from "node:fs";
 import { mkdir, readFile, rename, rm, stat, writeFile, copyFile } from "node:fs/promises";
 import path from "node:path";
+import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -20,7 +21,11 @@ const paths = {
   feedMedia: () => path.join(config.storagePath, "feed", "media")
 };
 await ensureStorage(config.storagePath);
-await ensureDefaultUser(config);
+if (!config.hostUsersPath) {
+  await ensureDefaultUser(config);
+} else {
+  console.log(`[euthersync] users: ${config.hostUsersPath}`);
+}
 
 const server = createServer(async (req, res) => {
   try {
@@ -56,6 +61,11 @@ async function loadConfig() {
     port: Number(process.env.EUTHERSYNC_PORT || fileConfig.port || 3000),
     publicUrl: process.env.EUTHERSYNC_PUBLIC_URL || fileConfig.publicUrl || "https://example.com",
     localUrl: process.env.EUTHERSYNC_LOCAL_URL || fileConfig.localUrl || "http://eutheroxide.local:3000",
+    hostUsersPath: process.env.EUTHERSYNC_HOST_USERS || fileConfig.hostUsersPath || "",
+    hostVerifyBin:
+      process.env.EUTHERSYNC_HOST_VERIFY_BIN ||
+      fileConfig.hostVerifyBin ||
+      path.resolve(projectRoot, "..", "..", "target", "release", "euther-oxide"),
     storagePath,
     sessionSecret: process.env.EUTHERSYNC_SESSION_SECRET || fileConfig.sessionSecret || "change-me",
     defaultUser: {
@@ -125,7 +135,7 @@ async function route(req, res) {
 async function login(req, res) {
   const body = await readJson(req);
   const user = await getUser(body.username || "");
-  if (!user || !verifyPassword(body.password || "", user.password)) {
+  if (!user || !(await verifyUserPassword(body.password || "", user))) {
     return json(res, 401, { error: "Invalid username or password" });
   }
 
@@ -313,6 +323,9 @@ async function createFeedPost(req, res, user) {
 
 async function adminUsers(res, user) {
   if (!hasPermission(user, "admin")) return json(res, 403, { error: "admin permission required" });
+  if (config.hostUsersPath) {
+    return json(res, 200, { users: (await getUsers()).map(publicUser) });
+  }
   const names = await import("node:fs/promises").then((fs) => fs.readdir(paths.users()));
   const users = await Promise.all(
     names.filter((name) => name.endsWith(".json")).map((name) => readJsonFile(path.join(paths.users(), name), null))
@@ -322,6 +335,9 @@ async function adminUsers(res, user) {
 
 async function adminPermissions(req, res, url, user) {
   if (!hasPermission(user, "admin")) return json(res, 403, { error: "admin permission required" });
+  if (config.hostUsersPath) {
+    return json(res, 409, { error: "Users and permissions are managed by EutherOxide users.toml" });
+  }
   const parts = url.pathname.split("/").filter(Boolean);
   const userId = safeId(parts[3] || "");
   const permission = parts[4];
@@ -347,7 +363,7 @@ async function media(req, res, url, user) {
   if (parts[1] === "library" && parts.length >= 5) {
     if (!hasPermission(user, "media_backup")) return json(res, 403, { error: "media_backup permission required" });
     const userId = safeId(parts[2]);
-    if (userId !== user.id) return json(res, 403, { error: "Forbidden" });
+    if (userId !== safeId(user.id)) return json(res, 403, { error: "Forbidden" });
     filePath = path.join(paths.library(), userId, safeId(parts[3]), ...parts.slice(4).map(cleanFileName));
   } else if (parts[1] === "feed" && parts[2]) {
     filePath = path.join(paths.feedMedia(), cleanFileName(parts[2]));
@@ -389,7 +405,23 @@ async function currentUser(req) {
 }
 
 async function getUser(id) {
+  if (config.hostUsersPath) {
+    const lookupId = String(id || "").trim().toLowerCase();
+    return (await getUsers()).find((user) => user.id.toLowerCase() === lookupId) || null;
+  }
   return readJsonFile(path.join(paths.users(), `${safeId(id)}.json`), null);
+}
+
+async function getUsers() {
+  if (!config.hostUsersPath) {
+    const names = await import("node:fs/promises").then((fs) => fs.readdir(paths.users()));
+    const users = await Promise.all(
+      names.filter((name) => name.endsWith(".json")).map((name) => readJsonFile(path.join(paths.users(), name), null))
+    );
+    return users.filter(Boolean);
+  }
+
+  return parseHostUsersToml(await readFile(config.hostUsersPath, "utf8"));
 }
 
 async function ensureDefaultUser() {
@@ -421,8 +453,89 @@ function verifyPassword(password, stored) {
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
+async function verifyUserPassword(password, user) {
+  if (user.passwordHash) return verifyHostPassword(password, user.passwordHash);
+  if (user.password) return verifyPassword(password, user.password);
+  return false;
+}
+
+async function verifyHostPassword(password, passwordHash) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(config.hostVerifyBin, ["--host-verify-password", passwordHash], {
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code !== 0) {
+        return reject(new Error(stderr.trim() || `password verifier exited with ${code}`));
+      }
+      resolve(stdout.trim() === "true");
+    });
+    child.stdin.end(password);
+  });
+}
+
+function parseHostUsersToml(contents) {
+  const users = [];
+  let current = null;
+
+  for (const rawLine of contents.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    if (line === "[[user]]") {
+      current = {};
+      users.push(current);
+      continue;
+    }
+    if (!current) continue;
+
+    const match = line.match(/^([A-Za-z0-9_]+)\s*=\s*(.+)$/);
+    if (!match) continue;
+    current[match[1]] = parseTomlValue(match[2]);
+  }
+
+  return users
+    .filter((user) => typeof user.name === "string" && typeof user.password_hash === "string")
+    .map((user) => ({
+      id: user.name,
+      displayName: user.name,
+      passwordHash: user.password_hash,
+      permissions: hostPermissions(user)
+    }));
+}
+
+function parseTomlValue(value) {
+  const trimmed = value.trim();
+  if (trimmed === "true") return true;
+  if (trimmed === "false") return false;
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    return trimmed.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+  }
+  return trimmed;
+}
+
+function hostPermissions(user) {
+  const enabled = user.banned !== true;
+  return {
+    feed_read: enabled,
+    feed_post: enabled,
+    media_backup: enabled && (user.admin === true || user.can_upload_roms === true || user.can_manage_library === true),
+    admin: enabled && user.admin === true
+  };
+}
+
 function publicUser(user) {
-  return { id: user.id, displayName: user.displayName, permissions: normalizePermissions(user.permissions) };
+  return { id: user.id, displayName: user.displayName || user.id, permissions: normalizePermissions(user.permissions) };
 }
 
 function normalizePermissions(permissions = {}) {
