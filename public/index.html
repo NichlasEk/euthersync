@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>EutherSync</title>
-    <link rel="stylesheet" href="styles.css?v=20260607-4">
+    <link rel="stylesheet" href="styles.css?v=20260607-5">
   </head>
   <body>
     <header class="topbar">
@@ -149,6 +149,11 @@
       </section>
     </main>
 
-    <script type="module" src="app.js?v=20260607-4"></script>
+    <div id="media-viewer" class="media-viewer" hidden>
+      <button id="media-viewer-close" class="media-viewer-close" type="button" aria-label="Close image">Close</button>
+      <img id="media-viewer-image" alt="">
+    </div>
+
+    <script type="module" src="app.js?v=20260607-5"></script>
   </body>
 </html>

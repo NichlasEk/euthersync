@@ -196,7 +196,9 @@ body[data-theme="royal-apothic"] .emoji-row button,
 body[data-theme="dark"] .post-actions button,
 body[data-theme="royal-apothic"] .post-actions button,
 body[data-theme="dark"] .comments-toggle,
-body[data-theme="royal-apothic"] .comments-toggle {
+body[data-theme="royal-apothic"] .comments-toggle,
+body[data-theme="dark"] .feed-image-button,
+body[data-theme="royal-apothic"] .feed-image-button {
   background: rgba(255, 255, 255, 0.06);
   color: var(--ink);
 }
@@ -413,24 +415,40 @@ main {
   background: #111;
 }
 
+.feed-image-button {
+  display: block;
+  width: 100%;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+
+.feed-image-button img {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
 .comments {
-  border-top: 1px solid var(--line);
-  padding: 0.15rem 0.9rem 0.9rem;
+  padding: 0 0.9rem;
 }
 
 .comments-toggle {
-  width: max-content;
-  padding: 0.4rem 0;
-  background: transparent;
-  color: var(--muted);
-  border: 0;
+  width: 100%;
+  padding: 0.65rem 0.8rem;
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 6px;
   font-weight: 700;
+  text-align: left;
 }
 
 .comments-panel {
   display: grid;
   gap: 0.65rem;
-  padding-top: 0.35rem;
+  padding: 0.65rem 0 0.15rem;
 }
 
 .comment {
@@ -466,6 +484,34 @@ main {
 
 .comment-form input {
   min-width: 0;
+}
+
+.media-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 3.5rem 1rem 1rem;
+  background: rgba(0, 0, 0, 0.88);
+}
+
+.media-viewer img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.media-viewer-close {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  background: #fff;
+  color: #111;
+}
+
+body.viewer-open {
+  overflow: hidden;
 }
 
 .empty {

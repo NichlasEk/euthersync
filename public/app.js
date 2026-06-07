@@ -38,6 +38,9 @@ const els = {
   logout: document.querySelector("#logout"),
   backupTab: document.querySelector("#backup-tab"),
   settingsAdminLink: document.querySelector("#settings-admin-link"),
+  mediaViewer: document.querySelector("#media-viewer"),
+  mediaViewerImage: document.querySelector("#media-viewer-image"),
+  mediaViewerClose: document.querySelector("#media-viewer-close"),
   viewButtons: document.querySelectorAll("[data-view]"),
   views: document.querySelectorAll("[data-panel]")
 };
@@ -99,10 +102,15 @@ function bindEvents() {
   els.feed.addEventListener("pointerup", resetFeedPull);
   els.feed.addEventListener("pointercancel", resetFeedPull);
   els.adminUsers.addEventListener("change", onAdminPermissionChange);
+  els.mediaViewer.addEventListener("click", onMediaViewerClick);
+  els.mediaViewerClose.addEventListener("click", closeMediaViewer);
   document.querySelector("[data-panel='settings']").addEventListener("click", onSettingsClick);
   window.addEventListener("focus", () => refreshFeedIfActive("focus", 2500));
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") refreshFeedIfActive("visible", 2500);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeMediaViewer();
   });
   els.viewButtons.forEach((button) => {
     button.addEventListener("click", () => showPanel(button.dataset.view));
@@ -324,6 +332,9 @@ async function onAdminPermissionChange(event) {
 }
 
 async function onFeedClick(event) {
+  const image = event.target.closest("[data-view-image]");
+  if (image) return openMediaViewer(image.dataset.viewImage);
+
   const toggle = event.target.closest("[data-comments-toggle]");
   if (toggle) return toggleComments(toggle.dataset.commentsToggle);
 
@@ -337,6 +348,23 @@ async function onFeedClick(event) {
   if (!response.ok) return showMessage("feed-message", "Delete failed.");
   showMessage("feed-message", "Post deleted.");
   await refreshFeed();
+}
+
+function openMediaViewer(url) {
+  els.mediaViewerImage.src = url;
+  els.mediaViewer.hidden = false;
+  document.body.classList.add("viewer-open");
+}
+
+function closeMediaViewer() {
+  if (els.mediaViewer.hidden) return;
+  els.mediaViewer.hidden = true;
+  els.mediaViewerImage.removeAttribute("src");
+  document.body.classList.remove("viewer-open");
+}
+
+function onMediaViewerClick(event) {
+  if (event.target === els.mediaViewer) closeMediaViewer();
 }
 
 async function onFeedSubmit(event) {
@@ -557,12 +585,12 @@ function renderFeed() {
           </div>
         </header>
         ${post.post.caption ? `<p>${escapeHtml(post.post.caption)}</p>` : ""}
-        ${post.media && isImage ? `
-          <a class="feed-image-link" href="${escapeAttr(appPath(fullImageUrl))}" target="_blank" rel="noopener">
-            <img src="${escapeAttr(appPath(imageUrl))}" alt="" loading="lazy" decoding="async">
-          </a>` : ""}
-        ${post.media && isVideo ? `<video src="${escapeAttr(appPath(post.media.url))}" controls preload="metadata"></video>` : ""}
         ${renderComments(post)}
+        ${post.media && isImage ? `
+          <button class="feed-image-button" type="button" data-view-image="${escapeAttr(appPath(fullImageUrl))}">
+            <img src="${escapeAttr(appPath(imageUrl))}" alt="" loading="lazy" decoding="async">
+          </button>` : ""}
+        ${post.media && isVideo ? `<video src="${escapeAttr(appPath(post.media.url))}" controls preload="metadata"></video>` : ""}
       </article>`;
   }).join("");
 }
@@ -574,7 +602,7 @@ function renderComments(post) {
   return `
     <section class="comments" data-comments="${escapeAttr(postId)}">
       <button class="comments-toggle" type="button" data-comments-toggle="${escapeAttr(postId)}">
-        Comments · ${count}
+        ${entry.open ? "Hide comments" : "Comments"} · ${count}
       </button>
       ${entry.open ? `
         <div class="comments-panel">
