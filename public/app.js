@@ -38,7 +38,11 @@ const els = {
   feedTabs: document.querySelector("#feed-tabs"),
   feedTabsList: document.querySelector("#feed-tabs-list"),
   feedAdd: document.querySelector("#feed-add"),
+  archiveTab: document.querySelector("#archive-tab"),
+  albumArchive: document.querySelector("#album-archive"),
   feedTitle: document.querySelector("#feed-title"),
+  archiveDialog: document.querySelector("#archive-dialog"),
+  archiveForm: document.querySelector("#archive-form"),
   adminUsers: document.querySelector("#admin-users"),
   userLabel: document.querySelector("#user-label"),
   userSettings: document.querySelector("#user-settings"),
@@ -103,6 +107,9 @@ function bindEvents() {
   els.feedCamera.addEventListener("change", onFeedCameraChange);
   els.library.addEventListener("click", onLibraryClick);
   els.feedTabs.addEventListener("click", onFeedTabsClick);
+  els.albumArchive.addEventListener("click", onAlbumArchiveClick);
+  els.archiveForm.addEventListener("submit", onArchiveSubmit);
+  els.archiveForm.querySelector("[data-archive-cancel]").addEventListener("click", closeArchiveDialog);
   els.feed.addEventListener("click", onFeedClick);
   els.feed.addEventListener("submit", onFeedSubmit);
   els.feed.addEventListener("scroll", onFeedScroll);
@@ -214,9 +221,17 @@ async function onFeedTabsClick(event) {
   if (rename) return renameFeed(rename.dataset.renameFeed);
 
   const feed = event.target.closest("[data-feed-id]");
-  if (feed) return selectFeed(feed.dataset.feedId);
+  if (feed) {
+    if (feed.dataset.feedId === state.activeFeedId && canArchiveActiveFeed()) return openArchiveDialog();
+    return selectFeed(feed.dataset.feedId);
+  }
 
   if (event.target.closest("#feed-add")) return createFeed();
+}
+
+async function onAlbumArchiveClick(event) {
+  const album = event.target.closest("[data-album-feed-id]");
+  if (album) return selectFeed(album.dataset.albumFeedId);
 }
 
 async function onFeedPost(event) {
@@ -486,6 +501,7 @@ async function refreshFeeds() {
     localStorage.setItem("euthersync-active-feed", state.activeFeedId);
   }
   renderFeedTabs();
+  renderAlbumArchive();
 }
 
 async function selectFeed(feedId) {
@@ -493,8 +509,42 @@ async function selectFeed(feedId) {
   localStorage.setItem("euthersync-active-feed", state.activeFeedId);
   state.comments = {};
   renderFeedTabs();
+  renderAlbumArchive();
   showPanel("feed");
   await refreshFeed({ fresh: true });
+}
+
+async function onArchiveSubmit(event) {
+  event.preventDefault();
+  if (!canArchiveActiveFeed()) return closeArchiveDialog();
+  const form = new FormData(event.currentTarget);
+  const name = String(form.get("name") || "").trim();
+  const password = String(form.get("password") || "");
+  if (!name || !password) return;
+
+  await archiveActiveFeed(name, password);
+}
+
+async function archiveActiveFeed(name, password) {
+  const sourceFeed = currentFeed();
+  if (!sourceFeed) return;
+  showMessage("archive-message", "Archiving...");
+  const response = await api(`/api/feeds/${sourceFeed.id}/archive`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, password })
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "Archive failed" }));
+    return showMessage("archive-message", error.error || "Archive failed.");
+  }
+
+  const data = await response.json();
+  state.feeds = data.feeds;
+  closeArchiveDialog();
+  showMessage("feed-message", `Archived ${data.moved} posts from ${sourceFeed.name} to ${data.album.name}.`);
+  await selectFeed(sourceFeed.id);
+  renderAlbumArchive();
 }
 
 async function createFeed() {
@@ -626,11 +676,13 @@ function renderAuth() {
   els.userLabel.textContent = state.user ? state.user.displayName : "";
   els.logout.hidden = !state.user;
   els.backupTab.hidden = !can("media_backup");
-  els.feedForm.hidden = Boolean(state.user) && !can("feed_post");
+  renderFeedComposer();
+  els.archiveTab.hidden = !state.user;
   els.settingsAdminLink.hidden = !can("admin");
   els.userSettings.hidden = !state.user;
   if (state.user) showPanel("feed");
   renderFeedTabs();
+  renderAlbumArchive();
   renderSettings();
 }
 
@@ -698,7 +750,7 @@ function renderFeed() {
 
 function renderFeedTabs() {
   els.feedTitle.textContent = currentFeed()?.name || "Family feed";
-  els.feedTabsList.innerHTML = state.feeds.map((feed) => {
+  els.feedTabsList.innerHTML = activeFeeds().map((feed) => {
     const canRename = !feed.system && (feed.createdBy === state.user?.id || can("admin"));
     return `
       <span class="feed-tab-item">
@@ -710,10 +762,71 @@ function renderFeedTabs() {
         ${canRename ? `<button class="feed-rename" type="button" data-rename-feed="${escapeAttr(feed.id)}" aria-label="Rename ${escapeAttr(feed.name)}">Edit</button>` : ""}
       </span>`;
   }).join("");
+  renderFeedComposer();
 }
 
 function currentFeed() {
   return state.feeds.find((feed) => feed.id === state.activeFeedId) || state.feeds.find((feed) => feed.id === "family");
+}
+
+function activeFeeds() {
+  return state.feeds.filter((feed) => !feed.archived);
+}
+
+function archivedFeeds() {
+  return state.feeds
+    .filter((feed) => feed.archived)
+    .sort((a, b) => String(b.archivedAt || b.createdAt).localeCompare(String(a.archivedAt || a.createdAt)));
+}
+
+function renderFeedComposer() {
+  els.feedForm.hidden = !state.user || !can("feed_post") || currentFeed()?.archived === true;
+}
+
+function renderAlbumArchive() {
+  const albums = archivedFeeds();
+  if (!els.albumArchive) return;
+  if (albums.length === 0) {
+    els.albumArchive.innerHTML = `<p class="empty">No archived albums yet.</p>`;
+    return;
+  }
+  els.albumArchive.innerHTML = albums.map((album) => `
+    <button
+      class="album-button ${album.id === state.activeFeedId ? "active" : ""}"
+      type="button"
+      data-album-feed-id="${escapeAttr(album.id)}"
+    >
+      <strong>${escapeHtml(album.name)}</strong>
+      <span>${album.archivedAt ? formatDate(album.archivedAt) : "Archived album"}</span>
+    </button>
+  `).join("");
+}
+
+function canArchiveActiveFeed() {
+  const feed = currentFeed();
+  return can("admin") && Boolean(feed) && feed.archived !== true;
+}
+
+function openArchiveDialog() {
+  if (!canArchiveActiveFeed()) return;
+  els.archiveForm.reset();
+  showMessage("archive-message", "");
+  if (typeof els.archiveDialog.showModal === "function") {
+    els.archiveDialog.showModal();
+    els.archiveForm.elements.name.focus();
+    return;
+  }
+  const name = prompt("Album name", "Bornholm 2026");
+  if (!name?.trim()) return;
+  const password = prompt("Admin password");
+  if (!password) return;
+  archiveActiveFeed(name, password);
+}
+
+function closeArchiveDialog() {
+  if (els.archiveDialog.open) els.archiveDialog.close();
+  els.archiveForm.reset();
+  showMessage("archive-message", "");
 }
 
 function renderComments(post) {
@@ -805,6 +918,7 @@ function showPanel(panel) {
   if (can("admin") && panel === "admin") refreshUsers();
   if (panel === "feed") refreshFeedIfActive("show", 0);
   if (panel === "settings") renderSettings();
+  renderAlbumArchive();
 }
 
 function renderSettings() {

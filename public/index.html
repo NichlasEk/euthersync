@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>EutherSync</title>
-    <link rel="stylesheet" href="styles.css?v=20260607-9">
+    <link rel="stylesheet" href="styles.css?v=20260609-archive3">
   </head>
   <body>
     <header class="topbar">
@@ -41,6 +41,7 @@
         <nav id="feed-tabs" class="tabs feed-tabs" aria-label="Feeds">
           <button id="backup-tab" type="button" data-view="backup">Private library</button>
           <div id="feed-tabs-list" class="feed-tabs-list"></div>
+          <button id="archive-tab" type="button" data-view="archive">Album archive</button>
           <button id="feed-add" class="feed-add" type="button" aria-label="Create feed" title="Create feed">+</button>
         </nav>
 
@@ -107,6 +108,14 @@
           <div id="feed" class="feed"></div>
         </section>
 
+        <section data-panel="archive" hidden>
+          <div class="section-heading">
+            <h2>Album archive</h2>
+            <p>Saved family feed albums.</p>
+          </div>
+          <div id="album-archive" class="album-archive"></div>
+        </section>
+
         <section data-panel="admin" hidden>
           <div class="section-heading">
             <h2>Admin</h2>
@@ -153,6 +162,25 @@
       <img id="media-viewer-image" alt="">
     </div>
 
-    <script type="module" src="app.js?v=20260607-9"></script>
+    <dialog id="archive-dialog" class="archive-dialog">
+      <form id="archive-form" method="dialog">
+        <h2>Archive to album?</h2>
+        <label>
+          Album name
+          <input name="name" autocomplete="off" placeholder="Bornholm 2026" required maxlength="48">
+        </label>
+        <label>
+          Admin password
+          <input name="password" type="password" autocomplete="current-password" required>
+        </label>
+        <p id="archive-message" class="message"></p>
+        <div class="dialog-actions">
+          <button type="button" class="secondary-button" data-archive-cancel>No</button>
+          <button type="submit">Yes</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script type="module" src="app.js?v=20260609-archive3"></script>
   </body>
 </html>

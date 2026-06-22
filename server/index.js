@@ -132,6 +132,9 @@ async function route(req, res) {
   if (req.method === "POST" && url.pathname === "/api/publish") return publish(req, res, user);
   if (req.method === "GET" && url.pathname === "/api/feeds") return feeds(res, user);
   if (req.method === "POST" && url.pathname === "/api/feeds") return createFeed(req, res, user);
+  if (req.method === "POST" && url.pathname.startsWith("/api/feeds/") && url.pathname.endsWith("/archive")) {
+    return archiveFeed(req, res, url, user);
+  }
   if (req.method === "PATCH" && url.pathname.startsWith("/api/feeds/")) return renameFeed(req, res, url, user);
   if (req.method === "GET" && url.pathname.startsWith("/api/feeds/") && url.pathname.endsWith("/posts")) {
     return feed(res, user, feedIdFromFeedRoute(url));
@@ -354,6 +357,57 @@ async function renameFeed(req, res, url, user) {
   return json(res, 200, { feed, feeds: existing });
 }
 
+async function archiveFeed(req, res, url, user) {
+  if (!hasPermission(user, "admin")) return json(res, 403, { error: "admin permission required" });
+  const fullUser = await getUser(user.id);
+  const body = await readJson(req);
+  if (!fullUser || !(await verifyUserPassword(body.password || "", fullUser))) {
+    return json(res, 401, { error: "Invalid password" });
+  }
+
+  const sourceFeed = await findFeed(feedIdFromArchiveRoute(url));
+  if (!sourceFeed) return json(res, 404, { error: "Feed not found" });
+  if (sourceFeed.archived) return json(res, 403, { error: "Archived albums cannot be archived again" });
+
+  const name = cleanFeedName(body.name);
+  if (!name) return json(res, 400, { error: "Album name is required" });
+
+  const feeds = await readFeeds();
+  const now = new Date().toISOString();
+  const album = {
+    id: uniqueFeedId(name, feeds),
+    name,
+    createdBy: user.id,
+    createdAt: now,
+    system: false,
+    archived: true,
+    archivedFrom: sourceFeed.id,
+    archivedAt: now
+  };
+
+  let moved = 0;
+  try {
+    const names = await import("node:fs/promises").then((fs) => fs.readdir(paths.feedPosts()));
+    await Promise.all(names.filter((entry) => entry.endsWith(".json")).map(async (entry) => {
+      const postPath = path.join(paths.feedPosts(), entry);
+      const post = await readJsonFile(postPath, null);
+      if (!post || normalizeFeedId(post.post?.feedId || "family") !== sourceFeed.id) return;
+      post.post.feedId = album.id;
+      post.post.archivedAt = now;
+      post.post.archivedBy = user.id;
+      await writeJsonFile(postPath, post);
+      moved += 1;
+    }));
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  if (moved === 0) return json(res, 400, { error: `${sourceFeed.name} has no posts to archive` });
+
+  const next = [...feeds, album];
+  await writeFeeds(next);
+  return json(res, 201, { album, feeds: next, moved });
+}
+
 async function feed(res, user, feedId = "family") {
   if (!hasPermission(user, "feed_read")) return json(res, 403, { error: "feed_read permission required" });
   const selectedFeed = await findFeed(feedId);
@@ -400,6 +454,7 @@ async function createFeedPost(req, res, user, routeFeedId = "family") {
   const body = await readJson(req);
   const selectedFeed = await findFeed(routeFeedId || body.feedId || "family");
   if (!selectedFeed) return json(res, 404, { error: "Feed not found" });
+  if (selectedFeed.archived) return json(res, 403, { error: "Archived albums are read-only" });
   const caption = String(body.caption || "").trim().slice(0, 500);
   if (!caption) return json(res, 400, { error: "Caption is required" });
 
@@ -424,6 +479,7 @@ async function createFeedUpload(req, res, url, user, routeFeedId = "family") {
 
   const selectedFeed = await findFeed(routeFeedId || url.searchParams.get("feedId") || "family");
   if (!selectedFeed) return json(res, 404, { error: "Feed not found" });
+  if (selectedFeed.archived) return json(res, 403, { error: "Archived albums are read-only" });
   const caption = String(url.searchParams.get("caption") || "").trim().slice(0, 500);
   const originalName = cleanFileName(url.searchParams.get("name") || req.headers["x-file-name"] || "feed-image.jpg");
   const mimeType = String(req.headers["content-type"] || "application/octet-stream").split(";")[0];
@@ -759,15 +815,23 @@ function parseTomlValue(value) {
 function hostPermissions(user) {
   const enabled = user.banned !== true;
   const admin = enabled && (user.admin === true || user.name === "nichlas");
+  if (admin) {
+    return {
+      feed_read: true,
+      feed_post: true,
+      media_backup: true,
+      admin: true
+    };
+  }
   const mediaBackup =
     user.euthersync_media_backup === true ||
     (user.euthersync_media_backup !== false &&
-      (user.admin === true || user.can_upload_roms === true || user.can_manage_library === true));
+      (user.can_upload_roms === true || user.can_manage_library === true));
   return {
     feed_read: enabled,
     feed_post: enabled && user.euthersync_feed_post !== false,
     media_backup: enabled && mediaBackup,
-    admin
+    admin: false
   };
 }
 
@@ -1027,13 +1091,16 @@ async function readFeeds() {
       createdBy: String(feed.createdBy || "system"),
       createdAt: String(feed.createdAt || new Date().toISOString()),
       updatedAt: feed.updatedAt ? String(feed.updatedAt) : undefined,
-      system: feed.system === true
+      system: feed.system === true,
+      archived: feed.archived === true,
+      archivedFrom: feed.archivedFrom ? normalizeFeedId(feed.archivedFrom) : undefined,
+      archivedAt: feed.archivedAt ? String(feed.archivedAt) : undefined
     }))
     .filter((feed) => feed.id);
   if (!normalized.some((feed) => feed.id === "family")) {
     normalized.unshift(defaultFamilyFeed());
   }
-  return normalized;
+  return liveIndexedFeeds(normalized);
 }
 
 async function writeFeeds(feeds) {
@@ -1053,6 +1120,58 @@ function defaultFamilyFeed() {
     createdAt: "2026-06-07T00:00:00.000Z",
     system: true
   };
+}
+
+async function liveIndexedFeeds(feeds) {
+  const postStats = await feedPostStats();
+  const indexed = new Map(feeds.map((feed) => [feed.id, feed]));
+
+  for (const [feedId, stats] of postStats) {
+    if (indexed.has(feedId) || !stats.archived) continue;
+    indexed.set(feedId, {
+      id: feedId,
+      name: titleFromFeedId(feedId),
+      createdBy: "system",
+      createdAt: stats.archivedAt || stats.createdAt || new Date().toISOString(),
+      system: false,
+      archived: true,
+      archivedAt: stats.archivedAt
+    });
+  }
+
+  return [...indexed.values()].filter((feed) => !feed.archived || (postStats.get(feed.id)?.count || 0) > 0);
+}
+
+async function feedPostStats() {
+  const stats = new Map();
+  try {
+    const names = await import("node:fs/promises").then((fs) => fs.readdir(paths.feedPosts()));
+    await Promise.all(names.filter((name) => name.endsWith(".json")).map(async (name) => {
+      const post = await readJsonFile(path.join(paths.feedPosts(), name), null);
+      const feedId = normalizeFeedId(post?.post?.feedId || "family");
+      const entry = stats.get(feedId) || { count: 0, archived: false, archivedAt: "", createdAt: "" };
+      entry.count += 1;
+      entry.archived = entry.archived || Boolean(post?.post?.archivedAt);
+      entry.archivedAt = latestIso(entry.archivedAt, post?.post?.archivedAt);
+      entry.createdAt = latestIso(entry.createdAt, post?.post?.createdAt);
+      stats.set(feedId, entry);
+    }));
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  return stats;
+}
+
+function latestIso(current, candidate) {
+  const value = String(candidate || "");
+  return value && value.localeCompare(current || "") > 0 ? value : current;
+}
+
+function titleFromFeedId(feedId) {
+  return String(feedId || "album")
+    .replace(/[-_]+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase()) || "Archived album";
 }
 
 function uniqueFeedId(name, feeds) {
@@ -1077,6 +1196,11 @@ function cleanFeedName(value) {
 function feedIdFromFeedRoute(url) {
   const parts = url.pathname.split("/").filter(Boolean);
   return normalizeFeedId(parts[2] || "family");
+}
+
+function feedIdFromArchiveRoute(url) {
+  const parts = url.pathname.split("/").filter(Boolean);
+  return parts.length === 4 && parts[3] === "archive" ? normalizeFeedId(parts[2] || "family") : "";
 }
 
 async function readManifest(userId, deviceId, deviceName) {
