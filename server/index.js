@@ -69,10 +69,6 @@ async function loadConfig() {
       process.env.EUTHERSYNC_HOST_VERIFY_BIN ||
       fileConfig.hostVerifyBin ||
       path.resolve(projectRoot, "..", "..", "target", "release", "euther-oxide"),
-    hostLoginUrl:
-      process.env.EUTHERSYNC_HOST_LOGIN_URL ||
-      fileConfig.hostLoginUrl ||
-      "http://127.0.0.1:32162/api/app/login",
     storagePath,
     sessionSecret: process.env.EUTHERSYNC_SESSION_SECRET || fileConfig.sessionSecret || "change-me",
     defaultUser: {
@@ -768,25 +764,9 @@ function verifyPassword(password, stored) {
 }
 
 async function verifyUserPassword(password, user) {
-  if (user.passwordHash && config.hostLoginUrl) return verifyHostLogin(user.id, password);
   if (user.passwordHash) return verifyHostPassword(password, user.passwordHash);
   if (user.password) return verifyPassword(password, user.password);
   return false;
-}
-
-async function verifyHostLogin(username, password) {
-  const response = await fetch(config.hostLoginUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({ username, password }),
-    redirect: "manual"
-  });
-  await response.arrayBuffer();
-  if (response.status === 401) return false;
-  if (!response.ok) throw new Error(`host login returned HTTP ${response.status}`);
-  return true;
 }
 
 async function verifyHostPassword(password, passwordHash) {
