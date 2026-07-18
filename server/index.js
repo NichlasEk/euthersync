@@ -712,7 +712,16 @@ async function currentUser(req) {
 async function getUser(id) {
   if (config.hostUsersPath) {
     const lookupId = String(id || "").trim().toLowerCase();
-    return (await getUsers()).find((user) => user.id.toLowerCase() === lookupId) || null;
+    const matches = (await getUsers()).filter((user) => user.id.toLowerCase() === lookupId);
+    if (matches.length > 1) {
+      const canonical = matches.find((user) => user.id === lookupId) || matches[0];
+      console.warn(
+        `[euthersync] duplicate host users for ${JSON.stringify(lookupId)}; ` +
+        `selected ${JSON.stringify(canonical.id)}`
+      );
+      return canonical;
+    }
+    return matches[0] || null;
   }
   return readJsonFile(path.join(paths.users(), `${safeId(id)}.json`), null);
 }
