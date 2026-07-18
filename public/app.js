@@ -96,6 +96,9 @@ async function refreshMe() {
 }
 
 function bindEvents() {
+  const rememberedUsername = localStorage.getItem("euthersync-login-username");
+  const usernameInput = els.loginForm.elements.namedItem("username");
+  if (rememberedUsername && usernameInput && !usernameInput.value) usernameInput.value = rememberedUsername;
   els.loginForm.addEventListener("submit", onLogin);
   els.logout.addEventListener("click", onLogout);
   els.userSettings.addEventListener("click", () => showPanel("settings"));
@@ -135,16 +138,27 @@ function bindEvents() {
 async function onLogin(event) {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
+  const username = String(form.get("username") || "").trim();
+  if (!username) return showMessage("login-message", "Enter a username.");
   const response = await fetch(appPath("/api/login"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      username: form.get("username"),
+      username,
       password: form.get("password")
     })
   });
-  if (!response.ok) return showMessage("login-message", "Login failed.");
+  if (!response.ok) {
+    const message = response.status === 401
+      ? "Wrong username or password."
+      : response.status === 503
+        ? "Password verification is temporarily unavailable."
+        : "Login failed.";
+    return showMessage("login-message", message);
+  }
   const data = await response.json();
+  localStorage.setItem("euthersync-login-username", username);
+  event.currentTarget.elements.namedItem("password").value = "";
   state.user = data.user;
   renderAuth();
   await refreshPreferences();

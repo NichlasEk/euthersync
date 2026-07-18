@@ -69,6 +69,10 @@ async function loadConfig() {
       process.env.EUTHERSYNC_HOST_VERIFY_BIN ||
       fileConfig.hostVerifyBin ||
       path.resolve(projectRoot, "..", "..", "target", "release", "euther-oxide"),
+    hostLoginUrl:
+      process.env.EUTHERSYNC_HOST_LOGIN_URL ||
+      fileConfig.hostLoginUrl ||
+      "http://127.0.0.1:32162/api/app/login",
     storagePath,
     sessionSecret: process.env.EUTHERSYNC_SESSION_SECRET || fileConfig.sessionSecret || "change-me",
     defaultUser: {
@@ -161,8 +165,21 @@ async function route(req, res) {
 
 async function login(req, res) {
   const body = await readJson(req);
-  const user = await getUser(body.username || "");
-  if (!user || !(await verifyUserPassword(body.password || "", user))) {
+  const username = String(body.username || "").trim();
+  const user = await getUser(username);
+  if (!user) {
+    console.warn(`[euthersync] login rejected user=${JSON.stringify(username)} reason=unknown_user`);
+    return json(res, 401, { error: "Invalid username or password" });
+  }
+  let passwordAccepted = false;
+  try {
+    passwordAccepted = await verifyUserPassword(body.password || "", user);
+  } catch (error) {
+    console.error(`[euthersync] login verifier failed user=${JSON.stringify(user.id)}`, error);
+    return json(res, 503, { error: "Password verification unavailable" });
+  }
+  if (!passwordAccepted) {
+    console.warn(`[euthersync] login rejected user=${JSON.stringify(user.id)} reason=bad_password`);
     return json(res, 401, { error: "Invalid username or password" });
   }
 
@@ -742,9 +759,25 @@ function verifyPassword(password, stored) {
 }
 
 async function verifyUserPassword(password, user) {
+  if (user.passwordHash && config.hostLoginUrl) return verifyHostLogin(user.id, password);
   if (user.passwordHash) return verifyHostPassword(password, user.passwordHash);
   if (user.password) return verifyPassword(password, user.password);
   return false;
+}
+
+async function verifyHostLogin(username, password) {
+  const response = await fetch(config.hostLoginUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ username, password }),
+    redirect: "manual"
+  });
+  await response.arrayBuffer();
+  if (response.status === 401) return false;
+  if (!response.ok) throw new Error(`host login returned HTTP ${response.status}`);
+  return true;
 }
 
 async function verifyHostPassword(password, passwordHash) {

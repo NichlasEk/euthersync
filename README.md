@@ -102,12 +102,15 @@ EutherSync reads `config.json` in the project directory unless `EUTHERSYNC_CONFI
 - `EUTHERSYNC_PUBLIC_URL`
 - `EUTHERSYNC_HOST_USERS`
 - `EUTHERSYNC_HOST_VERIFY_BIN`
+- `EUTHERSYNC_HOST_LOGIN_URL`
 - `EUTHERSYNC_DEFAULT_USER`
 - `EUTHERSYNC_DEFAULT_NAME`
 - `EUTHERSYNC_DEFAULT_PASSWORD`
 
 When `EUTHERSYNC_HOST_USERS` points at the EutherOxide `users.toml`, EutherSync
 uses that TOML file as the source for users, permissions, and password hashes.
+Host-user passwords are delegated over localhost to EutherOxide's app-login route;
+the standalone verifier remains as a compatibility fallback.
 The verifier binary set by `EUTHERSYNC_HOST_VERIFY_BIN` checks the Argon2id
 password hashes, reading the attempted password from stdin.
 
